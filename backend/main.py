@@ -13,6 +13,7 @@ from backend.risk.predictor import RiskPredictor
 from backend.risk.gemini_explainer import explain_risk_with_gemini
 
 from backend.rag.pipeline import CodeAtlasRAG
+from backend.secrets import redact_analysis, scan_repository
 
 
 app = FastAPI(title="CodeAtlas API")
@@ -148,12 +149,23 @@ async def analyze(
                 extract_path
             )
 
+        # Scan before parsing. Only masked metadata leaves the backend;
+        # the extracted repository itself is never modified.
+        secret_analysis = scan_repository(
+            extract_path
+        )
+
         # ----------------------------------------------------
         # Parse repository
         # ----------------------------------------------------
 
         parsed_files = analyze_repository(
             extract_path
+        )
+
+        # Prevent raw credentials from entering graph responses or RAG prompts.
+        parsed_files = redact_analysis(
+            parsed_files
         )
 
         current_analysis = parsed_files
@@ -190,7 +202,8 @@ async def analyze(
             ),
             "edges": len(
                 current_graph.edges
-            )
+            ),
+            "secrets": secret_analysis,
         }
 
 

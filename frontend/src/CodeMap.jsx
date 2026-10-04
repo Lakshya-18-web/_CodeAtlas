@@ -23,11 +23,25 @@ import {
   FileCode2,
   ArrowLeft,
   Network,
+  KeyRound,
 } from "lucide-react";
 
 
 const NODE_WIDTH = 190;
 const NODE_HEIGHT = 72;
+
+
+// ============================================================
+// RELATION -> EDGE CLASS  (purely visual; relation text unchanged)
+// ============================================================
+
+function relationEdgeClass(relation) {
+  const r = String(relation || "").toUpperCase();
+  if (r === "CALLS") return "ca-edge-calls";
+  if (r === "IMPORTS") return "ca-edge-imports";
+  if (r === "CONTAINS") return "ca-edge-contains";
+  return "";
+}
 
 
 // ============================================================
@@ -42,15 +56,14 @@ function CustomNode({ data }) {
   const isClass =
     data.type === "class";
 
+  const riskLevel = data.riskLevel
+    ? String(data.riskLevel).toLowerCase()
+    : null;
+
   return (
     <div
-      className={`min-w-[190px] rounded-xl border px-4 py-3 shadow-xl ${
-        isFile
-          ? "border-white/20 bg-[#18181b]"
-          : isClass
-          ? "border-blue-500/20 bg-[#12151a]"
-          : "border-white/10 bg-[#111113]"
-      }`}
+      className="ca-node"
+      data-kind={data.type}
     >
 
       <Handle
@@ -58,32 +71,36 @@ function CustomNode({ data }) {
         position={Position.Left}
       />
 
-      <div className="flex items-center gap-2">
+      <div className="ca-node-head">
 
         {isFile ? (
-          <FileCode2
-            size={15}
-            className="text-zinc-400"
-          />
-        ) : isClass ? (
-          <Code2
-            size={15}
-            className="text-blue-400"
-          />
+          <FileCode2 />
         ) : (
-          <Code2
-            size={15}
-            className="text-zinc-400"
-          />
+          <Code2 />
         )}
 
-        <span className="text-sm font-medium text-zinc-200 truncate">
+        <span className="ca-node-label">
           {data.label}
         </span>
 
+        {riskLevel && (
+          <span
+            className="ca-node-risk"
+            data-level={riskLevel}
+            title={`${data.riskLevel} risk`}
+          />
+        )}
+
+        {data.hasSecret && (
+          <KeyRound
+            size={12}
+            style={{ color: "var(--ca-medium-text)", flexShrink: 0 }}
+          />
+        )}
+
       </div>
 
-      <p className="text-[11px] text-zinc-600 mt-1">
+      <p className="ca-node-kind">
         {isFile
           ? "Python file"
           : isClass
@@ -209,48 +226,16 @@ function RiskBadge({ level }) {
   const normalized =
     String(level || "Low").toLowerCase();
 
-  if (normalized === "high") {
-
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-
-        <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-
-        High
-
-      </span>
-    );
-
-  }
-
-  if (normalized === "medium") {
-
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
-
-        <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-
-        Medium
-
-      </span>
-    );
-
-  }
-
   return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-
-      Low
-
+    <span className="ca-badge ca-badge-dot" data-tone={normalized}>
+      {level || "Low"}
     </span>
   );
 }
 
 
 // ============================================================
-// RISK COLOR
+// RISK COLOR  (icon color only; logic unchanged)
 // ============================================================
 
 function getRiskColor(level) {
@@ -259,14 +244,14 @@ function getRiskColor(level) {
     String(level || "Low").toLowerCase();
 
   if (normalized === "high") {
-    return "text-red-400";
+    return "var(--ca-high-text)";
   }
 
   if (normalized === "medium") {
-    return "text-yellow-400";
+    return "var(--ca-medium-text)";
   }
 
-  return "text-emerald-400";
+  return "var(--ca-low-text)";
 }
 
 
@@ -324,11 +309,26 @@ function getFileStats(selectedNode) {
 
 
 // ============================================================
+// SECRET LOOKUP (file -> findings), built from the same
+// secretReport the Dashboard/Security pages already use.
+// ============================================================
+
+function buildSecretFileSet(secretReport) {
+  const set = new Set();
+  (secretReport?.findings || []).forEach((finding) => {
+    if (finding?.file) set.add(finding.file);
+  });
+  return set;
+}
+
+
+// ============================================================
 // MAIN CODE MAP
 // ============================================================
 
 export default function CodeMap({
   repository,
+  secretReport,
 }) {
 
   const [view, setView] =
@@ -500,6 +500,29 @@ export default function CodeMap({
 
 
   // ============================================================
+  // SECRET FILE SET  (derived, no new request)
+  // ============================================================
+
+  const secretFiles = useMemo(
+    () => buildSecretFileSet(secretReport),
+    [secretReport]
+  );
+
+
+  // ============================================================
+  // RISK LOOKUP BY NODE ID (for coloring graph nodes)
+  // ============================================================
+
+  const riskById = useMemo(() => {
+    const map = new Map();
+    risks.forEach((item) => {
+      if (item?.id) map.set(item.id, item);
+    });
+    return map;
+  }, [risks]);
+
+
+  // ============================================================
   // BUILD REACT FLOW GRAPH
   // ============================================================
 
@@ -509,36 +532,50 @@ export default function CodeMap({
   ) {
 
     const formattedNodes =
-      rawNodes.map((node) => ({
+      rawNodes.map((node) => {
 
-        id: node.id,
+        const risk = riskById.get(node.id);
 
-        type: "custom",
+        return {
 
-        data: {
+          id: node.id,
 
-          label:
-            node.type === "file"
-              ? node.name ||
-                node.file ||
-                node.id
+          type: "custom",
 
-              : node.type === "function"
-              ? `${node.name}()`
+          data: {
 
-              : node.name ||
-                node.id,
+            label:
+              node.type === "file"
+                ? node.name ||
+                  node.file ||
+                  node.id
 
-          type: node.type,
+                : node.type === "function"
+                ? `${node.name}()`
 
-        },
+                : node.name ||
+                  node.id,
 
-        position: {
-          x: 0,
-          y: 0,
-        },
+            type: node.type,
 
-      }));
+            riskLevel:
+              node.type === "function" && risk
+                ? risk.risk_level
+                : null,
+
+            hasSecret:
+              node.type === "file" &&
+              secretFiles.has(node.file || node.id),
+
+          },
+
+          position: {
+            x: 0,
+            y: 0,
+          },
+
+        };
+      });
 
 
     const formattedEdges =
@@ -562,6 +599,11 @@ export default function CodeMap({
 
             type:
               "smoothstep",
+
+            className:
+              relationEdgeClass(
+                edge.relation || edge.type
+              ),
 
           })
         )
@@ -662,7 +704,8 @@ export default function CodeMap({
         }
 
       },
-      []
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [riskById, secretFiles]
     );
 
 
@@ -779,7 +822,8 @@ export default function CodeMap({
 
       },
 
-      [risks]
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [risks, riskById, secretFiles]
     );
 
 
@@ -942,39 +986,57 @@ export default function CodeMap({
     ]);
 
 
-  const visibleNodes =
-    useMemo(() => {
+  // Dim (not remove) non-matching nodes during a graph search, so edges
+  // never dangle — the previous behavior filtered nodes out entirely.
+  const searchQuery = useMemo(
+    () => search.trim().toLowerCase(),
+    [search]
+  );
 
-      const q =
-        search
-          .trim()
-          .toLowerCase();
+  const visibleNodes = useMemo(() => {
+    if (!searchQuery || view !== "file") {
+      return nodes;
+    }
 
-      if (
-        !q ||
-        view !== "file"
-      ) {
+    return nodes.map((node) => {
+      const matches = String(node.data?.label || "")
+        .toLowerCase()
+        .includes(searchQuery);
 
-        return nodes;
+      return {
+        ...node,
+        className: matches ? "" : "is-dim",
+      };
+    });
+  }, [nodes, searchQuery, view]);
 
-      }
+  const visibleEdges = useMemo(() => {
+    if (!searchQuery || view !== "file") {
+      return edges;
+    }
 
-
-      return nodes.filter(
-        (node) =>
-          String(
-            node.data?.label ||
-            ""
-          )
+    const matchingIds = new Set(
+      nodes
+        .filter((node) =>
+          String(node.data?.label || "")
             .toLowerCase()
-            .includes(q)
-      );
+            .includes(searchQuery)
+        )
+        .map((node) => node.id)
+    );
 
-    }, [
-      nodes,
-      search,
-      view,
-    ]);
+    return edges.map((edge) => {
+      const active =
+        matchingIds.has(edge.source) || matchingIds.has(edge.target);
+
+      return {
+        ...edge,
+        className: `${edge.className || ""} ${
+          active ? "" : "ca-edge-dim"
+        }`.trim(),
+      };
+    });
+  }, [edges, nodes, searchQuery, view]);
 
 
   // ============================================================
@@ -985,28 +1047,19 @@ export default function CodeMap({
 
     return (
 
-      <div className="h-[calc(100vh-64px)] flex items-center justify-center">
+      <div className="ca-map">
+        <div className="ca-empty ca-empty-fill">
+          <div className="ca-empty-icon">
+            <FolderTree />
+          </div>
 
-        <div className="text-center max-w-md px-6">
+          <h2 className="ca-empty-title">No repository analyzed</h2>
 
-          <FolderTree
-            size={42}
-            className="mx-auto mb-4 text-zinc-600"
-          />
-
-          <h2 className="text-xl font-semibold text-zinc-300">
-            No repository analyzed
-          </h2>
-
-          <p className="text-sm text-zinc-600 mt-2">
-            Analyze a repository from
-            the Dashboard first. The
-            Code Map will then show
-            that repository only.
+          <p className="ca-empty-text">
+            Analyze a repository from the Overview page first. The Code Map
+            will then show that repository only.
           </p>
-
         </div>
-
       </div>
 
     );
@@ -1021,19 +1074,11 @@ export default function CodeMap({
 
     return (
 
-      <div className="h-[calc(100vh-64px)] flex items-center justify-center">
-
-        <div className="flex items-center gap-2 text-zinc-500">
-
-          <Loader2
-            size={16}
-            className="animate-spin"
-          />
-
+      <div className="ca-map">
+        <div className="ca-loading-line">
+          <span className="ca-spinner" />
           Loading codebase...
-
         </div>
-
       </div>
 
     );
@@ -1052,20 +1097,18 @@ export default function CodeMap({
 
     return (
 
-      <div className="h-[calc(100vh-64px)] flex items-center justify-center">
+      <div className="ca-map">
+        <div className="ca-empty ca-empty-fill">
+          <div className="ca-empty-icon">
+            <ShieldAlert style={{ color: "var(--ca-high-text)" }} />
+          </div>
 
-        <div className="text-center">
+          <h2 className="ca-empty-title" style={{ color: "var(--ca-high-text)" }}>
+            Backend connection failed
+          </h2>
 
-          <p className="text-red-400">
-            Backend connection failed.
-          </p>
-
-          <p className="text-xs text-zinc-600 mt-2">
-            {error}
-          </p>
-
+          <p className="ca-empty-text">{error}</p>
         </div>
-
       </div>
 
     );
@@ -1079,97 +1122,60 @@ export default function CodeMap({
 
   return (
 
-    <div className="h-[calc(100vh-64px)] flex flex-col">
+    <div className="ca-map">
 
       {/* ======================================================
           HEADER
       ====================================================== */}
 
-      <div className="px-8 py-5 border-b border-white/10 flex items-center justify-between">
+      <div className="ca-map-header">
 
-        <div className="flex items-center gap-4">
+        {view !== "files" && (
+          <button
+            onClick={goBack}
+            className="ca-btn ca-btn-secondary ca-btn-icon"
+            title="Go back"
+          >
+            <ArrowLeft size={16} />
+          </button>
+        )}
 
-          {view !== "files" && (
+        <div className="ca-map-heading">
+          <h1 className="ca-map-title">
+            <Network />
+            Code Map
+          </h1>
 
-            <button
-              onClick={goBack}
-              className="p-2 rounded-lg border border-white/10 hover:bg-white/5 text-zinc-400 hover:text-white"
-              title="Go back"
-            >
+          <p className="ca-map-stats">
 
-              <ArrowLeft
-                size={17}
-              />
+            {view === "files"
 
-            </button>
+              ? `${files.length.toLocaleString()} files · ${risks.length.toLocaleString()} functions analyzed`
 
-          )}
+              : view === "file"
 
+              ? `Symbols inside ${currentFile?.name || "this file"}`
 
-          <div>
+              : "Local relationships, risk, and source code"
 
-            <div className="flex items-center gap-2">
+            }
 
-              <Network
-                size={18}
-                className="text-zinc-400"
-              />
-
-              <h1 className="text-xl font-semibold">
-                Code Map
-              </h1>
-
-            </div>
-
-
-            <p className="text-sm text-zinc-500 mt-1">
-
-              {view === "files"
-
-                ? "Explore your repository file by file."
-
-                : view === "file"
-
-                ? `Explore symbols inside ${
-                    currentFile?.name ||
-                    "this file"
-                  }.`
-
-                : "Inspect local relationships, risk, and source code."
-
-              }
-
-            </p>
-
-          </div>
-
+          </p>
         </div>
 
-
-        {/* Search */}
-
-        <div className="flex items-center gap-2 border border-white/10 bg-[#111113] rounded-lg px-3 py-2">
-
-          <Search
-            size={15}
-            className="text-zinc-500"
-          />
-
+        <div className="ca-search ca-search-sm">
+          <Search />
           <input
             value={search}
             onChange={(e) =>
-              setSearch(
-                e.target.value
-              )
+              setSearch(e.target.value)
             }
             placeholder={
               view === "files"
                 ? "Search files..."
                 : "Search symbols..."
             }
-            className="bg-transparent outline-none text-sm w-56 text-zinc-300 placeholder:text-zinc-600"
           />
-
         </div>
 
       </div>
@@ -1179,323 +1185,218 @@ export default function CodeMap({
           BREADCRUMB
       ====================================================== */}
 
-      <div className="px-8 py-3 border-b border-white/5 flex items-center gap-2 text-xs text-zinc-500">
+      <div className="ca-breadcrumb">
 
         <button
           onClick={() => {
-
-            setSelectedNode(
-              null
-            );
-
-            setCurrentFile(
-              null
-            );
-
-            setView(
-              "files"
-            );
-
+            setSelectedNode(null);
+            setCurrentFile(null);
+            setView("files");
             setNodes([]);
-
             setEdges([]);
-
             setSearch("");
-
           }}
-          className="hover:text-white"
         >
-
           Repository
-
         </button>
 
-
         {currentFile && (
-
           <>
+            <span className="ca-breadcrumb-sep">/</span>
 
-            <span>
-              /
-            </span>
-
-            <button
-              onClick={() =>
-                openFile(
-                  currentFile
-                )
-              }
-              className="hover:text-white truncate max-w-[450px]"
-            >
-
-              {
-                currentFile.file ||
-                currentFile.id
-              }
-
+            <button onClick={() => openFile(currentFile)}>
+              {currentFile.file || currentFile.id}
             </button>
-
           </>
-
         )}
 
-
         {selectedNode && (
-
           <>
+            <span className="ca-breadcrumb-sep">/</span>
 
-            <span>
-              /
+            <span aria-current="page">
+              {selectedNode.name || selectedNode.id}
             </span>
-
-            <span className="text-zinc-300">
-
-              {
-                selectedNode.name ||
-                selectedNode.id
-              }
-
-            </span>
-
           </>
-
         )}
 
       </div>
 
 
       {/* ======================================================
-          CONTENT
+          BODY
       ====================================================== */}
 
-      <div className="flex-1 relative min-h-0">
+      <div className="ca-map-body">
 
+        <div className="ca-map-canvas">
 
-        {/* ====================================================
-            REPOSITORY FILE VIEW
-        ==================================================== */}
+          {/* ====================================================
+              REPOSITORY FILE VIEW
+          ==================================================== */}
 
-        {view === "files" && (
+          {view === "files" && (
 
-          <div className="h-full overflow-auto p-8">
+            <div className="ca-map-scroll">
 
-            {filteredFiles.length === 0 ? (
+              {filteredFiles.length === 0 ? (
 
-              <div className="h-full flex items-center justify-center">
-
-                <div className="text-center">
-
-                  <Code2
-                    size={28}
-                    className="mx-auto mb-3 text-zinc-600"
-                  />
-
-                  <p className="text-zinc-400">
-                    No files found.
-                  </p>
-
+                <div className="ca-empty ca-empty-fill">
+                  <div className="ca-empty-icon">
+                    <Code2 />
+                  </div>
+                  <p className="ca-empty-text">No files found.</p>
                 </div>
 
-              </div>
+              ) : (
 
-            ) : (
-
-              <>
-
-                <div className="flex items-center justify-between mb-5">
-
-                  <div>
-
-                    <p className="text-sm text-zinc-400">
-
-                      {
-                        filteredFiles.length.toLocaleString()
-                      }{" "}
-                      files
-
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <p className="ca-muted" style={{ fontSize: 13, margin: 0 }}>
+                      {filteredFiles.length.toLocaleString()} files
                     </p>
-
-                    <p className="text-xs text-zinc-600 mt-1">
-
-                      Click a file to inspect
-                      its functions and classes.
-
+                    <p className="ca-faint" style={{ fontSize: 12, marginTop: 4 }}>
+                      Click a file to inspect its functions and classes.
                     </p>
-
                   </div>
 
-                </div>
+                  <div className="ca-file-grid">
+                    {filteredFiles.map((file) => {
+                      const filePath = file.file || file.id;
+                      const flagged = secretFiles.has(filePath);
 
-
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-
-                  {filteredFiles.map(
-                    (file) => (
-
-                      <button
-                        key={file.id}
-                        onClick={() =>
-                          openFile(
-                            file
-                          )
-                        }
-                        className="text-left rounded-xl border border-white/10 bg-[#111113] hover:bg-white/[0.04] hover:border-white/20 p-4 transition"
-                      >
-
-                        <div className="flex items-start gap-3">
-
-                          <FolderTree
-                            size={17}
-                            className="text-zinc-500 mt-0.5 shrink-0"
-                          />
-
-                          <div className="min-w-0">
-
-                            <p className="text-sm text-zinc-200 truncate">
-
-                              {
-                                file.name ||
-                                file.id
-                              }
-
-                            </p>
-
-                            <p className="text-[11px] text-zinc-600 mt-1 break-all line-clamp-2">
-
-                              {
-                                file.file ||
-                                file.id
-                              }
-
-                            </p>
-
-                            <div className="mt-3 text-[11px] text-zinc-500">
-
-                              {
-                                file.symbol_count ??
-                                0
-                              }{" "}
-                              symbols
-
-                            </div>
-
+                      return (
+                        <button
+                          key={file.id}
+                          onClick={() => openFile(file)}
+                          className="ca-file-card"
+                        >
+                          <div className="ca-file-card-head">
+                            <FolderTree />
+                            <span className="ca-file-card-name">
+                              {file.name || file.id}
+                            </span>
                           </div>
 
-                        </div>
+                          <span className="ca-path" style={{ wordBreak: "break-all" }}>
+                            {filePath}
+                          </span>
 
-                      </button>
+                          <div className="ca-file-card-meta">
+                            <span>{file.symbol_count ?? 0} symbols</span>
 
-                    )
-                  )}
+                            {flagged && (
+                              <span className="ca-badge" data-tone="medium">
+                                <KeyRound size={11} />
+                                Secrets
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
 
-                </div>
-
-              </>
-
-            )}
-
-          </div>
-
-        )}
-
-
-        {/* ====================================================
-            FILE / NODE GRAPH VIEW
-        ==================================================== */}
-
-        {view !== "files" && (
-
-          <>
-
-            {graphLoading ? (
-
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#09090b]/60">
-
-                <div className="flex items-center gap-2 text-zinc-500">
-
-                  <Loader2
-                    size={16}
-                    className="animate-spin"
-                  />
-
-                  Loading graph...
-
-                </div>
-
-              </div>
-
-            ) : null}
-
-
-            {visibleNodes.length === 0 ? (
-
-              <div className="h-full flex items-center justify-center">
-
-                <div className="text-center">
-
-                  <Code2
-                    size={28}
-                    className="mx-auto mb-3 text-zinc-600"
-                  />
-
-                  <p className="text-zinc-400">
-                    No matching symbols in this view.
-                  </p>
-
-                </div>
-
-              </div>
-
-            ) : (
-
-              <ReactFlow
-                nodes={visibleNodes}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                onNodeClick={
-                  onNodeClick
-                }
-                fitView
-                fitViewOptions={{
-                  padding: 0.2,
-                }}
-                proOptions={{
-                  hideAttribution: true,
-                }}
-              >
-
-                <Background
-                  gap={20}
-                  size={1}
-                />
-
-                <Controls />
-
-                <MiniMap />
-
-              </ReactFlow>
-
-            )}
-
-          </>
-
-        )}
-
-
-        {/* ====================================================
-            ERROR BANNER
-        ==================================================== */}
-
-        {error &&
-          files.length > 0 && (
-
-            <div className="absolute bottom-4 left-4 z-20 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-xs text-red-300">
-
-              {error}
+              )}
 
             </div>
 
           )}
+
+
+          {/* ====================================================
+              FILE / NODE GRAPH VIEW
+          ==================================================== */}
+
+          {view !== "files" && (
+
+            <>
+
+              {graphLoading ? (
+                <div className="ca-map-overlay">
+                  <div className="ca-loading-line">
+                    <span className="ca-spinner" />
+                    Loading graph...
+                  </div>
+                </div>
+              ) : null}
+
+
+              {visibleNodes.length === 0 ? (
+
+                <div className="ca-empty ca-empty-fill">
+                  <div className="ca-empty-icon">
+                    <Code2 />
+                  </div>
+                  <p className="ca-empty-text">
+                    No matching symbols in this view.
+                  </p>
+                </div>
+
+              ) : (
+
+                <>
+                  <div className="ca-map-legend">
+                    <div className="ca-legend">
+                      <span className="ca-legend-item" data-kind="file">File</span>
+                      <span className="ca-legend-item" data-kind="class">Class</span>
+                      <span className="ca-legend-item" data-kind="function">Function</span>
+                      <span className="ca-legend-item" data-level="high">High risk</span>
+                      <span className="ca-legend-item" data-level="medium">Medium risk</span>
+                    </div>
+                  </div>
+
+                  <ReactFlow
+                    nodes={visibleNodes}
+                    edges={visibleEdges}
+                    nodeTypes={nodeTypes}
+                    onNodeClick={onNodeClick}
+                    fitView
+                    fitViewOptions={{
+                      padding: 0.2,
+                    }}
+                    proOptions={{
+                      hideAttribution: true,
+                    }}
+                  >
+
+                    <Background gap={22} size={1} />
+                    <Controls />
+                    <MiniMap pannable zoomable />
+
+                  </ReactFlow>
+                </>
+
+              )}
+
+            </>
+
+          )}
+
+
+          {/* ====================================================
+              ERROR BANNER
+          ==================================================== */}
+
+          {error && files.length > 0 && (
+            <div
+              className="ca-alert"
+              data-tone="error"
+              style={{
+                position: "absolute",
+                bottom: 16,
+                left: 16,
+                zIndex: 20,
+                maxWidth: 420,
+              }}
+            >
+              <ShieldAlert size={15} />
+              <div className="ca-alert-body">{error}</div>
+            </div>
+          )}
+
+        </div>
 
 
         {/* ====================================================
@@ -1504,85 +1405,56 @@ export default function CodeMap({
 
         {selectedNode && (
 
-          <div className="absolute top-4 right-4 w-[390px] max-h-[calc(100%-32px)] rounded-2xl border border-white/10 bg-[#111113] shadow-2xl overflow-hidden z-20">
+          <div className="ca-inspector">
 
+            <div className="ca-inspector-head">
 
-            {/* ------------------------------------------------
-                PANEL HEADER
-            ------------------------------------------------- */}
-
-            <div className="flex items-center justify-between p-4 border-b border-white/10">
-
-              <div className="min-w-0">
-
-                <p className="text-xs text-zinc-500">
-                  {selectedNode.type === "file"
-                    ? "Selected file"
-                    : "Selected symbol"}
+              <div style={{ minWidth: 0 }}>
+                <p className="ca-inspector-kind">
+                  {selectedNode.type === "file" ? "Selected file" : "Selected symbol"}
                 </p>
 
-                <h3 className="font-semibold mt-1 truncate">
-
-                  {selectedNode.type ===
-                  "function"
-
+                <h3 className="ca-inspector-title ca-truncate">
+                  {selectedNode.type === "function"
                     ? `${selectedNode.name}()`
-
-                    : selectedNode.name ||
-                      selectedNode.id}
-
+                    : selectedNode.name || selectedNode.id}
                 </h3>
-
               </div>
-
 
               <button
                 onClick={() => {
-
-                  setSelectedNode(
-                    null
-                  );
-
-                  setAiExplanation(
-                    null
-                  );
-
+                  setSelectedNode(null);
+                  setAiExplanation(null);
                 }}
-                className="text-zinc-500 hover:text-white"
+                className="ca-btn ca-btn-ghost ca-btn-icon ca-btn-sm"
               >
-
-                <X
-                  size={17}
-                />
-
+                <X size={16} />
               </button>
 
             </div>
 
-
-            <div className="p-4 space-y-5 overflow-y-auto max-h-[calc(100vh-210px)]">
-
+            <div className="ca-inspector-body">
 
               {/* ------------------------------------------------
                   FILE
               ------------------------------------------------- */}
 
               <div>
-
-                <p className="text-xs text-zinc-500 mb-2">
-                  File
+                <div className="ca-field-label">File</div>
+                <p className="ca-path" style={{ wordBreak: "break-all" }}>
+                  {selectedNode.file || selectedNode.id}
                 </p>
-
-                <p className="text-sm text-zinc-300 break-all">
-
-                  {
-                    selectedNode.file ||
-                    selectedNode.id
-                  }
-
-                </p>
-
               </div>
+
+              {secretFiles.has(selectedNode.file) && (
+                <div className="ca-alert" data-tone="warn">
+                  <KeyRound size={15} />
+                  <div className="ca-alert-body">
+                    This file has possible secrets detected. See Security for
+                    details.
+                  </div>
+                </div>
+              )}
 
 
               {/* ------------------------------------------------
@@ -1591,79 +1463,50 @@ export default function CodeMap({
 
               {selectedNode.type === "file" && (
                 <>
-                  <div>
-                    <p className="text-xs text-zinc-500 mb-2">
-                      File Type
-                    </p>
-
-                    <p className="text-sm text-zinc-300">
-                      Python file
-                    </p>
+                  <div className="ca-kv-grid">
+                    <div className="ca-kv">
+                      <div className="ca-kv-label">File Type</div>
+                      <div className="ca-kv-value" style={{ fontSize: 14 }}>Python file</div>
+                    </div>
                   </div>
 
                   <div>
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Path
-                    </p>
-
-                    <p className="text-sm text-zinc-300 break-all">
+                    <div className="ca-field-label">Path</div>
+                    <p className="ca-path" style={{ wordBreak: "break-all" }}>
                       {selectedNode.id}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-xs text-zinc-500 mb-3">
-                      Codebase Statistics
-                    </p>
+                    <div className="ca-field-label">Codebase Statistics</div>
 
                     {(() => {
-                      const stats =
-                        getFileStats(selectedNode);
+                      const stats = getFileStats(selectedNode);
 
                       return (
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-lg border border-white/5 bg-black/20 p-3">
-                            <p className="text-[11px] text-zinc-500">
-                              Symbols
-                            </p>
-
-                            <p className="text-lg font-semibold mt-1 text-zinc-200">
-                              {stats.symbols ||
-                                currentFile?.symbol_count ||
-                                0}
-                            </p>
+                        <div className="ca-kv-grid">
+                          <div className="ca-kv">
+                            <div className="ca-kv-label">Symbols</div>
+                            <div className="ca-kv-value">
+                              {stats.symbols || currentFile?.symbol_count || 0}
+                            </div>
                           </div>
 
-                          <div className="rounded-lg border border-white/5 bg-black/20 p-3">
-                            <p className="text-[11px] text-zinc-500">
-                              Functions
-                            </p>
-
-                            <p className="text-lg font-semibold mt-1 text-zinc-200">
-                              {stats.functions}
-                            </p>
+                          <div className="ca-kv">
+                            <div className="ca-kv-label">Functions</div>
+                            <div className="ca-kv-value">{stats.functions}</div>
                           </div>
 
-                          <div className="rounded-lg border border-white/5 bg-black/20 p-3">
-                            <p className="text-[11px] text-zinc-500">
-                              Classes
-                            </p>
-
-                            <p className="text-lg font-semibold mt-1 text-zinc-200">
-                              {stats.classes}
-                            </p>
+                          <div className="ca-kv">
+                            <div className="ca-kv-label">Classes</div>
+                            <div className="ca-kv-value">{stats.classes}</div>
                           </div>
 
-                          <div className="rounded-lg border border-white/5 bg-black/20 p-3">
-                            <p className="text-[11px] text-zinc-500">
-                              Imports
-                            </p>
-
-                            <p className="text-lg font-semibold mt-1 text-zinc-200">
-                              {stats.imports ||
-                                selectedNode.dependencies?.length ||
-                                0}
-                            </p>
+                          <div className="ca-kv">
+                            <div className="ca-kv-label">Imports</div>
+                            <div className="ca-kv-value">
+                              {stats.imports || selectedNode.dependencies?.length || 0}
+                            </div>
                           </div>
                         </div>
                       );
@@ -1671,47 +1514,26 @@ export default function CodeMap({
                   </div>
 
                   <div>
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Relationships
-                    </p>
+                    <div className="ca-field-label">Relationships</div>
 
                     {(() => {
-                      const stats =
-                        getFileStats(selectedNode);
+                      const stats = getFileStats(selectedNode);
 
                       return (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-zinc-500">
-                              Contains
-                            </span>
-
-                            <span className="text-zinc-300">
-                              {stats.contains ||
-                                stats.symbols}
-                            </span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                            <span className="ca-muted">Contains</span>
+                            <span>{stats.contains || stats.symbols}</span>
                           </div>
 
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-zinc-500">
-                              Imports
-                            </span>
-
-                            <span className="text-zinc-300">
-                              {stats.imports ||
-                                selectedNode.dependencies?.length ||
-                                0}
-                            </span>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                            <span className="ca-muted">Imports</span>
+                            <span>{stats.imports || selectedNode.dependencies?.length || 0}</span>
                           </div>
 
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-zinc-500">
-                              Calls
-                            </span>
-
-                            <span className="text-zinc-300">
-                              {stats.calls}
-                            </span>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                            <span className="ca-muted">Calls</span>
+                            <span>{stats.calls}</span>
                           </div>
                         </div>
                       );
@@ -1719,37 +1541,22 @@ export default function CodeMap({
                   </div>
 
                   <div>
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Symbols in this file
-                    </p>
+                    <div className="ca-field-label">Symbols in this file</div>
 
-                    {selectedNode.local_graph?.nodes
-                      ?.filter(
-                        (node) =>
-                          node.type === "function" ||
-                          node.type === "class"
-                      )
-                      .length > 0 ? (
-                      <div className="space-y-1.5">
+                    {selectedNode.local_graph?.nodes?.filter(
+                      (node) => node.type === "function" || node.type === "class"
+                    ).length > 0 ? (
+                      <ul className="ca-ref-list">
                         {selectedNode.local_graph.nodes
-                          .filter(
-                            (node) =>
-                              node.type === "function" ||
-                              node.type === "class"
-                          )
+                          .filter((node) => node.type === "function" || node.type === "class")
                           .map((symbol) => (
-                            <p
-                              key={symbol.id}
-                              className="text-sm text-zinc-300 break-all"
-                            >
-                              {symbol.type === "function"
-                                ? `${symbol.name}()`
-                                : symbol.name}
-                            </p>
+                            <li key={symbol.id} className="ca-ref" data-dir="dep">
+                              {symbol.type === "function" ? `${symbol.name}()` : symbol.name}
+                            </li>
                           ))}
-                      </div>
+                      </ul>
                     ) : (
-                      <p className="text-sm text-zinc-600">
+                      <p className="ca-faint" style={{ fontSize: 13 }}>
                         No functions or classes detected.
                       </p>
                     )}
@@ -1762,433 +1569,183 @@ export default function CodeMap({
                   FUNCTION DETAILS
               ------------------------------------------------- */}
 
-              {selectedNode.type ===
-                "function" && (
-
+              {selectedNode.type === "function" && (
                 <>
 
-
-                  {/* --------------------------------------------
-                      LINES
-                  --------------------------------------------- */}
-
                   <div>
-
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Lines
+                    <div className="ca-field-label">Lines</div>
+                    <p className="ca-prose" style={{ fontSize: 13 }}>
+                      {selectedNode.line} - {selectedNode.end_line}
                     </p>
-
-                    <p className="text-sm text-zinc-300">
-
-                      {
-                        selectedNode.line
-                      }
-
-                      {" - "}
-
-                      {
-                        selectedNode.end_line
-                      }
-
-                    </p>
-
                   </div>
 
 
-                  {/* --------------------------------------------
-                      RISK
-                  --------------------------------------------- */}
+                  {/* RISK */}
 
-                  <div className="border border-white/10 rounded-xl bg-white/[0.02] overflow-hidden">
+                  <div
+                    className="ca-signal"
+                    data-level={selectedNode.risk?.risk_level?.toLowerCase()}
+                  >
 
+                    <div className="ca-signal-head">
+                      <span>
+                        <ShieldAlert
+                          size={15}
+                          style={{ color: getRiskColor(selectedNode.risk?.risk_level) }}
+                        />
+                        ML Risk Analysis
+                      </span>
 
-                    {/* Risk Header */}
-
-                    <div className="p-4 border-b border-white/10">
-
-                      <div className="flex items-center justify-between">
-
-                        <div className="flex items-center gap-2">
-
-                          <ShieldAlert
-                            size={16}
-                            className={getRiskColor(
-                              selectedNode.risk?.risk_level
-                            )}
-                          />
-
-                          <p className="text-sm font-medium">
-                            ML Risk Analysis
-                          </p>
-
-                        </div>
-
-
-                        {selectedNode.risk && (
-
-                          <RiskBadge
-                            level={
-                              selectedNode.risk
-                                .risk_level
-                            }
-                          />
-
-                        )}
-
-                      </div>
-
+                      {selectedNode.risk && (
+                        <RiskBadge level={selectedNode.risk.risk_level} />
+                      )}
                     </div>
 
-
-                    {/* Risk Content */}
-
                     {riskLoading ? (
-
-                      <div className="p-4 flex items-center gap-2 text-zinc-500 text-sm">
-
-                        <Loader2
-                          size={14}
-                          className="animate-spin"
-                        />
-
+                      <div className="ca-loading-line" style={{ padding: 16 }}>
+                        <span className="ca-spinner" />
                         Loading risk prediction...
-
                       </div>
-
                     ) : selectedNode.risk ? (
+                      <div className="ca-signal-body">
 
-                      <div className="p-4 space-y-4">
+                        {/*
+                          Risk Index only — risk probability is
+                          intentionally not shown in the primary UI,
+                          preserved from the original implementation.
+                        */}
 
-
-                        {/* --------------------------------------
-                            RISK INDEX ONLY
-                            
-                            Risk Probability has intentionally
-                            been removed from the primary UI.
-                        --------------------------------------- */}
-
-                        <div className="grid grid-cols-1 gap-3">
-
-                          <div className="rounded-lg border border-white/5 bg-black/20 p-3">
-
-                            <p className="text-[11px] text-zinc-500">
-                              Risk Index
-                            </p>
-
-                            <p className="text-xl font-semibold mt-1">
-
-                              {Number(
-                                selectedNode.risk
-                                  .risk_score ||
-                                  0
-                              ).toFixed(0)}
-
-                              <span className="text-xs text-zinc-600 ml-1">
-                                / 100
-                              </span>
-
-                            </p>
-
+                        <div className="ca-kv">
+                          <div className="ca-kv-label">Risk Index</div>
+                          <div className="ca-kv-value">
+                            {Number(selectedNode.risk.risk_score || 0).toFixed(0)}
+                            <span className="ca-faint" style={{ fontSize: 12, marginLeft: 4 }}>
+                              / 100
+                            </span>
                           </div>
-
                         </div>
 
-
-                        {/* --------------------------------------
-                            MODEL SIGNALS
-                        --------------------------------------- */}
-
-                        {selectedNode.risk
-                          .reasons
-                          ?.length >
-                          0 && (
-
+                        {selectedNode.risk.reasons?.length > 0 && (
                           <div>
+                            <div className="ca-field-label">Model Signals</div>
 
-                            <p className="text-xs text-zinc-500 mb-2">
-                              Model Signals
-                            </p>
-
-
-                            <div className="space-y-1.5">
-
-                              {selectedNode.risk
-                                .reasons
-                                .slice(
-                                  0,
-                                  4
-                                )
-                                .map(
-                                  (
-                                    reason,
-                                    index
-                                  ) => (
-
-                                    <div
-                                      key={
-                                        index
-                                      }
-                                      className="text-xs text-zinc-400 bg-black/20 border border-white/5 rounded-lg px-3 py-2"
-                                    >
-
-                                      {
-                                        reason
-                                      }
-
-                                    </div>
-
-                                  )
-                                )}
-
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              {selectedNode.risk.reasons.slice(0, 4).map((reason, index) => (
+                                <div key={index} className="ca-signal-chip">
+                                  {reason}
+                                </div>
+                              ))}
                             </div>
-
                           </div>
-
                         )}
-
-
-                        {/* --------------------------------------
-                            GEMINI BUTTON
-                        --------------------------------------- */}
 
                         <button
-                          onClick={
-                            explainWithAI
-                          }
-                          disabled={
-                            explaining
-                          }
-                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-purple-500/20 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-500/30 transition text-sm disabled:opacity-50"
+                          onClick={explainWithAI}
+                          disabled={explaining}
+                          className="ca-btn ca-btn-ai ca-btn-block"
                         >
-
                           {explaining ? (
-
                             <>
-
-                              <Loader2
-                                size={15}
-                                className="animate-spin"
-                              />
-
+                              <Loader2 size={15} className="animate-spin" />
                               Gemini is analyzing...
-
                             </>
-
                           ) : (
-
                             <>
-
-                              <Sparkles
-                                size={15}
-                              />
-
+                              <Sparkles size={15} />
                               Explain Risk with AI
-
                             </>
-
                           )}
-
                         </button>
 
-
-                        {/* --------------------------------------
-                            GEMINI EXPLANATION
-                        --------------------------------------- */}
-
                         {aiExplanation && (
-
-                          <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
-
-                            <div className="flex items-center gap-2 mb-3">
-
-                              <Sparkles
-                                size={15}
-                                className="text-purple-400"
-                              />
-
-                              <span className="text-xs font-medium text-purple-300">
-                                Gemini Risk Explanation
-                              </span>
-
+                          <div className="ca-ai-block">
+                            <div className="ca-ai-block-head">
+                              <Sparkles size={13} />
+                              Gemini Risk Explanation
                             </div>
-
-
-                            <p className="text-xs leading-5 text-zinc-300">
-
-                              {
-                                aiExplanation
-                              }
-
-                            </p>
-
+                            {aiExplanation}
                           </div>
-
                         )}
 
                       </div>
-
                     ) : (
-
-                      <div className="p-4">
-
-                        <p className="text-xs text-zinc-600">
-
-                          No ML risk prediction
-                          is available for this node.
-
+                      <div style={{ padding: 16 }}>
+                        <p className="ca-faint" style={{ fontSize: 12.5 }}>
+                          No ML risk prediction is available for this node.
                         </p>
-
                       </div>
-
                     )}
 
                   </div>
 
 
-                  {/* --------------------------------------------
-                      CALLERS
-                  --------------------------------------------- */}
+                  {/* CALLERS */}
 
                   <div>
+                    <div className="ca-field-label">Callers</div>
 
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Callers
-                    </p>
-
-                    {selectedNode.callers
-                      ?.length > 0 ? (
-
-                      <div className="space-y-1 text-sm text-zinc-300">
-
-                        {selectedNode.callers.map(
-                          (caller) => (
-
-                            <p
-                              key={caller}
-                            >
-                              ← {caller}
-                            </p>
-
-                          )
-                        )}
-
-                      </div>
-
+                    {selectedNode.callers?.length > 0 ? (
+                      <ul className="ca-ref-list">
+                        {selectedNode.callers.map((caller) => (
+                          <li key={caller} className="ca-ref" data-dir="in">
+                            {caller}
+                          </li>
+                        ))}
+                      </ul>
                     ) : (
-
-                      <p className="text-sm text-zinc-600">
-                        No local callers
-                      </p>
-
+                      <p className="ca-faint" style={{ fontSize: 13 }}>No local callers</p>
                     )}
-
                   </div>
 
 
-                  {/* --------------------------------------------
-                      CALLEES
-                  --------------------------------------------- */}
+                  {/* CALLEES */}
 
                   <div>
+                    <div className="ca-field-label">Callees</div>
 
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Callees
-                    </p>
-
-                    {selectedNode.callees
-                      ?.length > 0 ? (
-
-                      <div className="space-y-1 text-sm text-zinc-300">
-
-                        {selectedNode.callees.map(
-                          (callee) => (
-
-                            <p
-                              key={callee}
-                            >
-                              → {callee}
-                            </p>
-
-                          )
-                        )}
-
-                      </div>
-
+                    {selectedNode.callees?.length > 0 ? (
+                      <ul className="ca-ref-list">
+                        {selectedNode.callees.map((callee) => (
+                          <li key={callee} className="ca-ref" data-dir="out">
+                            {callee}
+                          </li>
+                        ))}
+                      </ul>
                     ) : (
-
-                      <p className="text-sm text-zinc-600">
-                        No local callees
-                      </p>
-
+                      <p className="ca-faint" style={{ fontSize: 13 }}>No local callees</p>
                     )}
-
                   </div>
 
 
-                  {/* --------------------------------------------
-                      DEPENDENCIES
-                  --------------------------------------------- */}
+                  {/* DEPENDENCIES */}
 
                   <div>
+                    <div className="ca-field-label">Dependencies</div>
 
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Dependencies
-                    </p>
-
-                    {selectedNode
-                      .dependencies
-                      ?.length > 0 ? (
-
-                      <div className="space-y-1 text-sm text-zinc-300">
-
-                        {selectedNode.dependencies.map(
-                          (dependency) => (
-
-                            <p
-                              key={dependency}
-                            >
-                              ↳ {dependency}
-                            </p>
-
-                          )
-                        )}
-
-                      </div>
-
+                    {selectedNode.dependencies?.length > 0 ? (
+                      <ul className="ca-ref-list">
+                        {selectedNode.dependencies.map((dependency) => (
+                          <li key={dependency} className="ca-ref" data-dir="dep">
+                            {dependency}
+                          </li>
+                        ))}
+                      </ul>
                     ) : (
-
-                      <p className="text-sm text-zinc-600">
-                        No dependencies
-                      </p>
-
+                      <p className="ca-faint" style={{ fontSize: 13 }}>No dependencies</p>
                     )}
-
                   </div>
 
 
-                  {/* --------------------------------------------
-                      SOURCE CODE
-                  --------------------------------------------- */}
+                  {/* SOURCE CODE */}
 
                   <div>
-
-                    <p className="text-xs text-zinc-500 mb-2">
-                      Source Code
-                    </p>
-
-                    <pre className="text-xs bg-black/40 border border-white/5 rounded-lg p-3 overflow-auto text-zinc-400 max-h-64 whitespace-pre-wrap">
-
-                      {
-                        selectedNode.code ||
-                        "No source available"
-                      }
-
+                    <div className="ca-field-label">Source Code</div>
+                    <pre className="ca-code">
+                      {selectedNode.code || "No source available"}
                     </pre>
-
                   </div>
 
                 </>
-
               )}
 
 
@@ -2196,21 +1753,11 @@ export default function CodeMap({
                   CLASS DETAILS
               ------------------------------------------------- */}
 
-              {selectedNode.type ===
-                "class" && (
-
+              {selectedNode.type === "class" && (
                 <div>
-
-                  <p className="text-xs text-zinc-500 mb-2">
-                    Symbol Type
-                  </p>
-
-                  <p className="text-sm text-zinc-300">
-                    Python class
-                  </p>
-
+                  <div className="ca-field-label">Symbol Type</div>
+                  <p className="ca-prose" style={{ fontSize: 13 }}>Python class</p>
                 </div>
-
               )}
 
             </div>

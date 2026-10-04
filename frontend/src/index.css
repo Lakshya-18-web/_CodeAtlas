@@ -1,47 +1,701 @@
+/* ==========================================================================
+   CodeAtlas — index.css
+   Navigate. Understand. Predict.
+
+   Load order (main.jsx):  index.css  ->  App.jsx  ->  App.css
+
+   1.  Tailwind + theme extensions
+   2.  Design tokens (dark default, light override)
+   3.  Base styles
+   4.  Legacy class bridge  (recolors the CURRENT JSX; safe to delete once
+                              every component uses the .ca-* classes)
+   5.  React Flow / Code Map graph theme
+   ========================================================================== */
+
 @import "tailwindcss";
 
-* {
-  box-sizing: border-box;
+
+/* ==========================================================================
+   1. TAILWIND THEME EXTENSIONS
+   ========================================================================== */
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code",
+    "Roboto Mono", Menlo, Consolas, monospace;
+
+  /* Modest radii: controls 6, cards 10, panels 12 */
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.75rem;
 }
 
-body {
-  margin: 0;
-  font-family: Inter, system-ui, sans-serif;
-  background: #09090b;
-  color: #fafafa;
+/* Token-backed colors, so new JSX can write bg-ca-panel, text-ca-text-2,
+   border-ca-border, text-ca-cyan ... and still follow the active theme. */
+@theme inline {
+  --color-ca-navy: var(--ca-navy);
+  --color-ca-bg: var(--ca-bg);
+  --color-ca-sidebar: var(--ca-sidebar-bg);
+  --color-ca-panel: var(--ca-panel);
+  --color-ca-panel-2: var(--ca-panel-2);
+  --color-ca-sunken: var(--ca-sunken);
+  --color-ca-border: var(--ca-border);
+  --color-ca-border-strong: var(--ca-border-strong);
+  --color-ca-text: var(--ca-text);
+  --color-ca-text-2: var(--ca-text-2);
+  --color-ca-text-3: var(--ca-text-3);
+  --color-ca-blue: var(--ca-blue);
+  --color-ca-blue-bright: var(--ca-blue-bright);
+  --color-ca-blue-text: var(--ca-blue-text);
+  --color-ca-cyan: var(--ca-cyan);
+  --color-ca-violet: var(--ca-violet);
+  --color-ca-violet-text: var(--ca-violet-text);
+  --color-ca-low: var(--ca-low);
+  --color-ca-medium: var(--ca-medium);
+  --color-ca-high: var(--ca-high);
+  --color-ca-critical: var(--ca-critical);
 }
 
-.react-flow__edge-textbg {
-  fill: #18181b;
-  stroke: #27272a;
+/* Optional variant:  light:bg-white  */
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
+
+/* ==========================================================================
+   2. DESIGN TOKENS
+   The app sets data-theme on its root element, so tokens are declared on
+   :root (dark default) AND on [data-theme] selectors.
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Brand (from the logo) */
+  --ca-navy: #07142f;
+  --ca-blue: #1769e0;
+  --ca-blue-bright: #1687f8;
+  --ca-blue-text: #5ba8ff;
+  --ca-cyan: #16c5e8;
+
+  /* Surfaces */
+  --ca-bg: #080d18;
+  --ca-sidebar-bg: #081226;
+  --ca-panel: #0e1624;
+  --ca-panel-2: #131f31;
+  --ca-sunken: #0a111e;
+  --ca-graph-bg: #070b14;
+  --ca-graph-dot: #1a2840;
+
+  /* Lines */
+  --ca-border: #22324a;
+  --ca-border-subtle: #1a2638;
+  --ca-border-strong: #2f4466;
+
+  /* Text */
+  --ca-text: #f4f7fb;
+  --ca-text-2: #94a3b8;
+  --ca-text-3: #7c8ba1;
+  --ca-hover-text: #ffffff;
+
+  /* AI / RAG (secondary accent only) */
+  --ca-violet: #8b5cf6;
+  --ca-violet-text: #b79cfa;
+
+  /* Semantic: risk + security severity */
+  --ca-low: #22c55e;
+  --ca-low-text: #4ade80;
+  --ca-medium: #f59e0b;
+  --ca-medium-text: #fbbf24;
+  --ca-high: #ef4444;
+  --ca-high-text: #f87171;
+  --ca-critical: #b91c1c;
+  --ca-critical-text: #fca5a5;
+
+  /* Effects */
+  --ca-focus: #16c5e8;
+  --ca-scroll: #2a3b57;
+  --ca-shadow-node: 0 1px 2px rgb(0 0 0 / 0.4);
+  --ca-shadow-float: 0 12px 32px rgb(2 6 18 / 0.55);
+  --ca-overlay: rgb(5 9 18 / 0.78);
+
+  /* Layout */
+  --ca-inspector-w: 380px;
 }
 
-.react-flow__edge-text {
-  fill: #a1a1aa;
+[data-theme="light"] {
+  color-scheme: light;
+
+  --ca-navy: #07142f;
+  --ca-blue: #1769e0;
+  --ca-blue-bright: #0f5bc9;
+  --ca-blue-text: #1659b8;
+  --ca-cyan: #0891b2;
+
+  --ca-bg: #f4f8ff;
+  --ca-sidebar-bg: #ffffff;
+  --ca-panel: #ffffff;
+  --ca-panel-2: #eef5ff;
+  --ca-sunken: #f1f6fd;
+  --ca-graph-bg: #f8fbff;
+  --ca-graph-dot: #d6e2f5;
+
+  --ca-border: #d8e4f7;
+  --ca-border-subtle: #e5edfa;
+  --ca-border-strong: #bfd0ea;
+
+  --ca-text: #172033;
+  --ca-text-2: #52627d;
+  --ca-text-3: #66758f;
+  --ca-hover-text: #1659b8;
+
+  --ca-violet: #7c3aed;
+  --ca-violet-text: #6d28d9;
+
+  --ca-low: #16a34a;
+  --ca-low-text: #15803d;
+  --ca-medium: #d97706;
+  --ca-medium-text: #b45309;
+  --ca-high: #dc2626;
+  --ca-high-text: #b91c1c;
+  --ca-critical: #991b1b;
+  --ca-critical-text: #7f1d1d;
+
+  --ca-focus: #0891b2;
+  --ca-scroll: #c3d2ea;
+  --ca-shadow-node: 0 1px 2px rgb(23 32 51 / 0.12);
+  --ca-shadow-float: 0 12px 32px rgb(23 32 51 / 0.16);
+  --ca-overlay: rgb(244 248 255 / 0.85);
+}
+
+/* Derived tints. Declared on every theme selector so they resolve against the
+   active theme's base colors (var() resolves per element, not per :root). */
+:root,
+[data-theme="dark"],
+[data-theme="light"] {
+  --ca-blue-bg: color-mix(in srgb, var(--ca-blue) 14%, transparent);
+  --ca-blue-bg-soft: color-mix(in srgb, var(--ca-blue) 8%, transparent);
+  --ca-blue-border: color-mix(in srgb, var(--ca-blue) 40%, transparent);
+
+  --ca-cyan-bg: color-mix(in srgb, var(--ca-cyan) 12%, transparent);
+  --ca-cyan-border: color-mix(in srgb, var(--ca-cyan) 45%, transparent);
+
+  --ca-violet-bg: color-mix(in srgb, var(--ca-violet) 12%, transparent);
+  --ca-violet-bg-soft: color-mix(in srgb, var(--ca-violet) 6%, transparent);
+  --ca-violet-border: color-mix(in srgb, var(--ca-violet) 32%, transparent);
+
+  --ca-low-bg: color-mix(in srgb, var(--ca-low) 12%, transparent);
+  --ca-low-bg-soft: color-mix(in srgb, var(--ca-low) 6%, transparent);
+  --ca-low-border: color-mix(in srgb, var(--ca-low) 32%, transparent);
+
+  --ca-medium-bg: color-mix(in srgb, var(--ca-medium) 12%, transparent);
+  --ca-medium-bg-soft: color-mix(in srgb, var(--ca-medium) 6%, transparent);
+  --ca-medium-border: color-mix(in srgb, var(--ca-medium) 32%, transparent);
+
+  --ca-high-bg: color-mix(in srgb, var(--ca-high) 12%, transparent);
+  --ca-high-bg-soft: color-mix(in srgb, var(--ca-high) 6%, transparent);
+  --ca-high-border: color-mix(in srgb, var(--ca-high) 32%, transparent);
+
+  --ca-critical-bg: color-mix(in srgb, var(--ca-critical) 18%, transparent);
+  --ca-critical-border: color-mix(in srgb, var(--ca-critical) 50%, transparent);
+
+  --ca-glow: 0 0 0 1px color-mix(in srgb, var(--ca-cyan) 75%, transparent),
+    0 0 18px color-mix(in srgb, var(--ca-cyan) 32%, transparent);
+}
+
+/* Layout variables that components read. Pages inside .ca-shell account for
+   the 52px top bar; legacy pages (no shell) use 0. */
+:root {
+  --ca-topbar-h: 0px;
+  --ca-bottom-nav-h: 0px;
+}
+
+
+/* ==========================================================================
+   3. BASE
+   ========================================================================== */
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--ca-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--ca-text);
+    background: var(--ca-bg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  #root {
+    min-height: 100dvh;
+  }
+
+  button,
+  [role="button"],
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ca-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--ca-cyan) 30%, transparent);
+    color: inherit;
+  }
+
+  ::placeholder {
+    color: var(--ca-text-3);
+    opacity: 1;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ca-scroll) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--ca-scroll);
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ca-border-strong);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Keep the page behind the app on the same theme (the theme attribute lives
+   on the app root, not on <html>). */
+body:has([data-theme="light"]) {
+  background: #f4f8ff;
+  color-scheme: light;
+}
+
+
+/* ==========================================================================
+   4. LEGACY CLASS BRIDGE
+   Unlayered rules beat Tailwind utilities (which live in @layer utilities),
+   so these recolor the existing JSX without editing it and make the light
+   theme work through variables instead of !important overrides.
+   Delete this whole section after the JSX migration is finished.
+   ========================================================================== */
+
+/* ---- Surfaces ----------------------------------------------------------- */
+
+[class~="bg-[#09090b]"] { background-color: var(--ca-bg); }
+[class~="bg-[#0d0d0f]"] { background-color: var(--ca-panel); }
+[class~="bg-[#111113]"] { background-color: var(--ca-panel); }
+[class~="bg-[#18181b]"],
+[class~="bg-[#12151a]"] { background-color: var(--ca-panel-2); }
+aside[class~="bg-[#0d0d0f]"] { background-color: var(--ca-sidebar-bg); }
+
+[class~="bg-[#09090b]/60"] {
+  background-color: color-mix(in srgb, var(--ca-bg) 65%, transparent);
+}
+
+[class~="bg-black/20"],
+[class~="bg-black/40"] { background-color: var(--ca-sunken); }
+
+[class~="bg-white/[0.015]"] { background-color: color-mix(in srgb, var(--ca-text) 2%, transparent); }
+[class~="bg-white/[0.02]"]  { background-color: color-mix(in srgb, var(--ca-text) 3%, transparent); }
+[class~="bg-white/[0.03]"]  { background-color: color-mix(in srgb, var(--ca-text) 4%, transparent); }
+[class~="bg-white/5"]       { background-color: color-mix(in srgb, var(--ca-text) 6%, transparent); }
+[class~="bg-white/10"]      { background-color: var(--ca-blue-bg); }
+
+[class~="hover:bg-white/5"]:hover,
+[class~="hover:bg-white/[0.02]"]:hover,
+[class~="hover:bg-white/[0.04]"]:hover {
+  background-color: var(--ca-panel-2);
+}
+[class~="hover:bg-white/10"]:hover { background-color: var(--ca-blue-bg); }
+
+/* ---- Borders ------------------------------------------------------------ */
+
+[class~="border-white/5"]  { border-color: var(--ca-border-subtle); }
+[class~="border-white/10"] { border-color: var(--ca-border); }
+[class~="border-white/20"] { border-color: var(--ca-border-strong); }
+[class~="hover:border-white/20"]:hover { border-color: var(--ca-cyan-border); }
+
+/* ---- Text --------------------------------------------------------------- */
+
+[class~="text-white"],
+[class~="text-zinc-200"],
+[class~="text-zinc-300"] { color: var(--ca-text); }
+
+[class~="text-zinc-400"] { color: var(--ca-text-2); }
+
+[class~="text-zinc-500"],
+[class~="text-zinc-600"],
+[class~="text-zinc-700"] { color: var(--ca-text-3); }
+
+[class~="hover:text-white"]:hover,
+[class~="hover:text-zinc-200"]:hover { color: var(--ca-hover-text); }
+
+[class~="placeholder:text-zinc-600"]::placeholder,
+[class~="placeholder:text-zinc-700"]::placeholder { color: var(--ca-text-3); }
+
+/* ---- Primary action (fixes the old white-on-grey Analyze hover) ---------- */
+
+[class~="bg-blue-600"] { background-color: var(--ca-blue); }
+[class~="bg-blue-600"][class~="text-white"] { color: #ffffff; }
+[class~="hover:bg-blue-700"]:hover,
+[class~="hover:bg-zinc-200"]:hover {
+  background-color: var(--ca-blue-bright);
+  color: #ffffff;
+}
+
+/* white "send" / logo tiles become brand blue */
+[class~="bg-white"][class~="text-black"] {
+  background-color: var(--ca-blue);
+  color: #ffffff;
+}
+
+/* ---- Semantic: high (red) ---------------------------------------------- */
+
+[class~="text-red-300"],
+[class~="text-red-400"] { color: var(--ca-high-text); }
+[class~="text-red-300/80"] { color: color-mix(in srgb, var(--ca-high-text) 80%, transparent); }
+[class~="bg-red-400"] { background-color: var(--ca-high); }
+[class~="bg-red-500/5"] { background-color: var(--ca-high-bg-soft); }
+[class~="bg-red-500/10"] { background-color: var(--ca-high-bg); }
+[class~="border-red-500/20"],
+[class~="border-red-500/30"] { border-color: var(--ca-high-border); }
+
+/* ---- Semantic: medium (amber / yellow) ---------------------------------- */
+
+[class~="text-yellow-300"],
+[class~="text-yellow-400"],
+[class~="text-amber-300"],
+[class~="text-amber-400"] { color: var(--ca-medium-text); }
+[class~="text-amber-300/80"] { color: color-mix(in srgb, var(--ca-medium-text) 80%, transparent); }
+[class~="bg-yellow-400"] { background-color: var(--ca-medium); }
+[class~="bg-yellow-500/5"],
+[class~="bg-amber-500/5"] { background-color: var(--ca-medium-bg-soft); }
+[class~="bg-yellow-500/10"],
+[class~="bg-amber-500/10"] { background-color: var(--ca-medium-bg); }
+[class~="border-yellow-500/20"],
+[class~="border-amber-500/15"],
+[class~="border-amber-500/20"],
+[class~="border-amber-500/30"] { border-color: var(--ca-medium-border); }
+
+/* ---- Semantic: low (green) --------------------------------------------- */
+
+[class~="text-emerald-400"] { color: var(--ca-low-text); }
+[class~="bg-emerald-400"] { background-color: var(--ca-low); }
+[class~="bg-emerald-500/5"] { background-color: var(--ca-low-bg-soft); }
+[class~="bg-emerald-500/10"] { background-color: var(--ca-low-bg); }
+[class~="border-emerald-500/20"] { border-color: var(--ca-low-border); }
+
+/* ---- AI (violet) -------------------------------------------------------- */
+
+[class~="text-purple-300"],
+[class~="text-purple-400"] { color: var(--ca-violet-text); }
+[class~="text-purple-400/60"] { color: color-mix(in srgb, var(--ca-violet-text) 65%, transparent); }
+[class~="hover:text-purple-300"]:hover { color: var(--ca-violet-text); }
+[class~="bg-purple-500/5"] { background-color: var(--ca-violet-bg-soft); }
+[class~="bg-purple-500/10"] { background-color: var(--ca-violet-bg); }
+[class~="hover:bg-purple-500/20"]:hover {
+  background-color: color-mix(in srgb, var(--ca-violet) 22%, transparent);
+}
+[class~="border-purple-500/20"] { border-color: var(--ca-violet-border); }
+[class~="hover:border-purple-500/30"]:hover {
+  border-color: color-mix(in srgb, var(--ca-violet) 55%, transparent);
+}
+
+/* Search inputs focus in brand cyan; violet is reserved for AI. */
+[class~="focus:border-purple-500/30"]:focus {
+  border-color: var(--ca-cyan-border);
+  background-color: var(--ca-sunken);
+}
+
+/* ---- Blue (ML / class nodes) -------------------------------------------- */
+
+[class~="text-blue-300"],
+[class~="text-blue-400"] { color: var(--ca-blue-text); }
+[class~="bg-blue-500/5"] { background-color: var(--ca-blue-bg-soft); }
+[class~="border-blue-500/20"] { border-color: var(--ca-blue-border); }
+
+/* ---- Elevation + radius polish ----------------------------------------- */
+
+[class~="shadow-xl"] { box-shadow: var(--ca-shadow-node); }
+[class~="shadow-2xl"] { box-shadow: var(--ca-shadow-float); }
+
+/* ---- Legacy layout fixes ------------------------------------------------ */
+
+/* Code Map used a 64px header offset it never rendered. */
+[class~="h-[calc(100vh-64px)]"] {
+  height: calc(100dvh - var(--ca-topbar-h) - var(--ca-bottom-nav-h));
+}
+
+/* Floating node panel must never exceed the canvas on small screens. */
+[class~="w-[390px]"] { max-width: calc(100% - 32px); }
+
+/* Risk View summary grids: stack on phones. */
+@media (max-width: 720px) {
+  [class~="grid-cols-3"] { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Risk View table: tighter columns on laptops, stacked cards on small screens. */
+@media (max-width: 1180px) {
+  [class~="grid-cols-[1.3fr_1.4fr_0.8fr_1.7fr_0.9fr_1fr]"] {
+    grid-template-columns: 1.2fr 1fr 0.8fr 1.5fr 0.9fr 1fr;
+    gap: 0.75rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+@media (max-width: 900px) {
+  [class~="grid"][class~="uppercase"] { display: none; }
+
+  [class~="grid"][class~="items-center"][class~="grid-cols-[1.3fr_1.4fr_0.8fr_1.7fr_0.9fr_1fr]"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  [class~="grid"][class~="items-center"][class~="grid-cols-[1.3fr_1.4fr_0.8fr_1.7fr_0.9fr_1fr]"] > :nth-child(4),
+  [class~="grid"][class~="items-center"][class~="grid-cols-[1.3fr_1.4fr_0.8fr_1.7fr_0.9fr_1fr]"] > :nth-child(6) {
+    grid-column: 1 / -1;
+  }
+}
+
+
+/* ==========================================================================
+   5. REACT FLOW  (Code Map graph)
+   Library CSS is imported later by CodeMap.jsx, so selectors are prefixed
+   with [data-theme] to win on specificity.
+   ========================================================================== */
+
+[data-theme] .react-flow {
+  --xy-background-color-default: var(--ca-graph-bg);
+  --xy-background-pattern-dots-color-default: var(--ca-graph-dot);
+  --xy-background-pattern-lines-color-default: var(--ca-graph-dot);
+  --xy-background-pattern-cross-color-default: var(--ca-graph-dot);
+
+  --xy-edge-stroke-default: color-mix(in srgb, var(--ca-blue) 55%, var(--ca-border));
+  --xy-edge-stroke-width-default: 1.25;
+  --xy-edge-stroke-selected-default: var(--ca-cyan);
+  --xy-connectionline-stroke-default: var(--ca-cyan);
+
+  --xy-edge-label-color-default: var(--ca-text-2);
+  --xy-edge-label-background-color-default: var(--ca-panel);
+
+  --xy-node-color-default: var(--ca-text);
+  --xy-node-border-default: 1px solid var(--ca-border);
+  --xy-node-background-color-default: var(--ca-panel);
+  --xy-handle-background-color-default: var(--ca-cyan);
+
+  --xy-minimap-background-color-default: var(--ca-panel);
+  --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--ca-bg) 72%, transparent);
+  --xy-minimap-node-background-color-default: var(--ca-border-strong);
+
+  --xy-controls-button-background-color-default: var(--ca-panel);
+  --xy-controls-button-background-color-hover-default: var(--ca-panel-2);
+  --xy-controls-button-color-default: var(--ca-text-2);
+  --xy-controls-button-color-hover-default: var(--ca-text);
+  --xy-controls-button-border-color-default: var(--ca-border);
+
+  background: var(--ca-graph-bg);
+}
+
+/* Nodes: handles stay functional for edge anchoring but are not visible. */
+[data-theme] .react-flow__handle {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-theme] .react-flow__node > div {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+[data-theme] .react-flow__node {
+  cursor: pointer;
+}
+
+[data-theme] .react-flow__node:hover > div:first-child {
+  border-color: color-mix(in srgb, var(--ca-cyan) 55%, var(--ca-border));
+}
+
+/* Selected node: the only glowing element in the graph. */
+[data-theme] .react-flow__node.selected > div:first-child,
+[data-theme] .react-flow__node:focus-visible > div:first-child {
+  border-color: var(--ca-cyan);
+  box-shadow: var(--ca-glow);
+}
+
+[data-theme] .react-flow__node:focus-visible {
+  outline: none;
+}
+
+/* Edges */
+[data-theme] .react-flow__edge-path {
+  stroke: var(--xy-edge-stroke-default);
+  stroke-width: 1.25;
+  transition: stroke 0.15s ease, opacity 0.15s ease;
+}
+
+[data-theme] .react-flow__edge:hover .react-flow__edge-path,
+[data-theme] .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--ca-cyan);
+  stroke-width: 1.75;
+}
+
+/* Edge styles by relation. Applied when the edge object carries
+   className: "ca-edge-calls" | "ca-edge-imports" | "ca-edge-contains". */
+[data-theme] .react-flow__edge.ca-edge-calls .react-flow__edge-path {
+  stroke: var(--ca-cyan);
+}
+
+[data-theme] .react-flow__edge.ca-edge-imports .react-flow__edge-path {
+  stroke: var(--ca-blue-bright);
+  stroke-dasharray: 5 4;
+}
+
+[data-theme] .react-flow__edge.ca-edge-contains .react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--ca-text-3) 55%, transparent);
+}
+
+[data-theme] .react-flow__edge.ca-edge-dim {
+  opacity: 0.22;
+}
+
+/* Edge labels stay readable but quiet; full strength on hover/selected/active. */
+[data-theme] .react-flow__edge-textwrapper {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+[data-theme] .react-flow__edge:hover .react-flow__edge-textwrapper,
+[data-theme] .react-flow__edge.selected .react-flow__edge-textwrapper,
+[data-theme] .react-flow__edge.ca-edge-active .react-flow__edge-textwrapper {
+  opacity: 1;
+}
+
+[data-theme] .react-flow__edge-textbg {
+  fill: var(--ca-panel);
+  stroke: var(--ca-border);
+}
+
+[data-theme] .react-flow__edge-text {
+  fill: var(--ca-text-2);
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
 }
 
-.react-flow__minimap {
-  background: #111113;
-  border: 1px solid #27272a;
+/* Controls */
+[data-theme] .react-flow__controls {
+  background: var(--ca-panel);
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  box-shadow: none;
+  overflow: hidden;
 }
 
-.react-flow__controls {
-  background: #111113;
-  border: 1px solid #27272a;
+[data-theme] .react-flow__controls-button {
+  background: var(--ca-panel);
+  border: 0;
+  border-bottom: 1px solid var(--ca-border);
+  color: var(--ca-text-2);
+  width: 28px;
+  height: 28px;
 }
 
-.react-flow__controls-button {
-  background: #111113;
-  border-bottom: 1px solid #27272a;
-  color: #a1a1aa;
+[data-theme] .react-flow__controls-button:last-child {
+  border-bottom: 0;
 }
 
-.react-flow__controls-button:hover {
-  background: #18181b;
+[data-theme] .react-flow__controls-button:hover {
+  background: var(--ca-panel-2);
+  color: var(--ca-text);
 }
 
-.react-flow__controls-button svg {
-  fill: #a1a1aa;
+[data-theme] .react-flow__controls-button svg {
+  fill: currentColor;
+  max-width: 12px;
+  max-height: 12px;
+}
+
+/* Minimap */
+[data-theme] .react-flow__minimap {
+  background: var(--ca-panel);
+  border: 1px solid var(--ca-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+[data-theme] .react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--ca-bg) 72%, transparent);
+}
+
+[data-theme] .react-flow__minimap-node {
+  fill: var(--ca-border-strong);
+  stroke: none;
+}
+
+/* Legend that sits on the canvas (used by Code Map JSX) */
+[data-theme] .react-flow__panel {
+  margin: 12px;
 }

@@ -11,12 +11,16 @@ export default function AskCodebase() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [askedQuestion, setAskedQuestion] = useState("");
 
   async function askQuestion() {
     if (!question.trim()) return;
 
+    const sentQuestion = question.trim();
+
     setLoading(true);
     setAnswer(null);
+    setAskedQuestion(sentQuestion);
 
     try {
       const response = await fetch("/api/ask", {
@@ -25,7 +29,7 @@ export default function AskCodebase() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: question.trim(),
+          question: sentQuestion,
         }),
       });
 
@@ -70,335 +74,235 @@ export default function AskCodebase() {
     answer?.error ||
     null;
 
+  const retrievalLabel = answer?.retrieval_backend
+    ? /tf.?idf|local/i.test(answer.retrieval_backend)
+      ? "Local TF-IDF retrieval"
+      : "Gemini retrieval"
+    : null;
+
+  const retrievalState = answer?.retrieval_backend
+    ? /tf.?idf|local/i.test(answer.retrieval_backend)
+      ? "local"
+      : "ok"
+    : null;
+
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="ca-ask">
 
-      {/* Header */}
-      <div className="mb-8">
+      {/* ===================================================
+          HEADER
+      =================================================== */}
 
-        <div className="flex items-center gap-3">
-
-          <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
-            <MessageSquare
-              size={20}
-              className="text-zinc-300"
-            />
-          </div>
+      <div className="ca-ask-head">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            className="ca-empty-icon"
+            style={{ width: 32, height: 32, borderColor: "var(--ca-violet-border)", background: "var(--ca-violet-bg)" }}
+          >
+            <MessageSquare size={16} style={{ color: "var(--ca-violet-text)" }} />
+          </span>
 
           <div>
-
-            <h1 className="text-2xl font-semibold">
-              Ask Codebase
-            </h1>
-
-            <p className="text-sm text-zinc-500 mt-1">
-              Ask questions about your repository using code and graph context.
+            <h1 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Ask Codebase</h1>
+            <p className="ca-faint" style={{ margin: 0, fontSize: 12.5 }}>
+              Repository-grounded AI assistant — ask about functions, dependencies and architecture.
             </p>
-
           </div>
-
         </div>
 
+        {retrievalLabel && (
+          <span className="ca-status-pill" data-state={retrievalState}>
+            {retrievalLabel}
+          </span>
+        )}
       </div>
 
+      {/* ===================================================
+          THREAD
+      =================================================== */}
 
-      {/* Chat area */}
-      <div className="border border-white/10 rounded-2xl bg-[#0d0d0f] min-h-[560px] flex flex-col">
+      <div className="ca-ask-thread">
+        <div className="ca-ask-column">
 
-
-        {/* Empty state */}
-        {!answer && !loading && (
-
-          <div className="flex-1 flex items-center justify-center">
-
-            <div className="text-center max-w-md">
-
-              <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-5">
-
-                <Sparkles
-                  size={24}
-                  className="text-zinc-400"
-                />
-
+          {/* Empty state */}
+          {!answer && !loading && (
+            <div className="ca-ask-empty">
+              <div className="ca-ask-empty-icon">
+                <Sparkles />
               </div>
 
-              <h2 className="text-lg font-medium">
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>
                 Understand your codebase
               </h2>
 
-              <p className="text-sm text-zinc-500 mt-2">
-                Ask questions about functions, dependencies,
-                architecture or how different parts of the code work.
+              <p className="ca-faint" style={{ fontSize: 13, maxWidth: 420 }}>
+                Ask about functions, dependencies, architecture or how
+                different parts of this repository work.
               </p>
 
-              <div className="flex flex-wrap justify-center gap-2 mt-6">
-
+              <div className="ca-ask-suggest">
                 {[
                   "How does authentication work?",
-                  "What calls login()?",
-                  "Which functions are risky?",
+                  "Which functions are the riskiest?",
+                  "Summarize the overall architecture",
                 ].map((item) => (
-
                   <button
                     key={item}
                     onClick={() => setQuestion(item)}
-                    className="text-xs border border-white/10 bg-white/[0.02] hover:bg-white/5 text-zinc-400 px-3 py-2 rounded-lg"
+                    className="ca-suggest"
                   >
                     {item}
                   </button>
-
                 ))}
-
               </div>
-
             </div>
+          )}
 
-          </div>
-
-        )}
-
-
-        {/* Loading */}
-        {loading && (
-
-          <div className="flex-1 flex items-center justify-center">
-
-            <div className="text-center">
-
-              <Sparkles
-                size={24}
-                className="text-zinc-500 mx-auto mb-3 animate-pulse"
-              />
-
-              <p className="text-sm text-zinc-400">
-                Analyzing your codebase...
-              </p>
-
-            </div>
-
-          </div>
-
-        )}
-
-
-        {/* Result */}
-        {answer && !loading && (
-
-          <div className="flex-1 p-6 overflow-auto">
-
-            {/* Question */}
-            <div className="mb-6">
-
-              <p className="text-xs text-zinc-600 uppercase tracking-wider mb-2">
-                You asked
-              </p>
-
-              <p className="text-sm text-zinc-300">
-                {question}
-              </p>
-
-            </div>
-
-
-            {/* Answer card */}
-            <div className="border border-white/10 rounded-xl bg-white/[0.02] p-5">
-
-              <div className="flex items-center gap-2 mb-4">
-
-                <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center">
-
-                  <Sparkles size={14} />
-
+          {/* Loading */}
+          {loading && (
+            <>
+              {askedQuestion && (
+                <div className="ca-msg-user">
+                  <div className="ca-msg-label">You asked</div>
+                  <p className="ca-msg-user-text">{askedQuestion}</p>
                 </div>
-
-                <span className="text-sm font-medium">
-                  CodeAtlas
-                </span>
-
-              </div>
-
-
-              {hasAnswer ? (
-
-                <p className="text-sm text-zinc-300 leading-7 whitespace-pre-wrap">
-                  {answer.answer}
-                </p>
-
-              ) : backendError ? (
-
-                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-
-                  <div className="flex items-center gap-2 mb-2">
-
-                    <AlertCircle
-                      size={16}
-                      className="text-red-400"
-                    />
-
-                    <span className="text-sm font-medium text-red-300">
-                      CodeAtlas could not generate an answer
-                    </span>
-
-                  </div>
-
-                  <p className="text-sm text-red-300/80 leading-6 whitespace-pre-wrap">
-                    {backendError}
-                  </p>
-
-                </div>
-
-              ) : (
-
-                <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-4">
-
-                  <p className="text-sm text-yellow-300">
-                    The repository context was retrieved, but the AI
-                    did not return an answer.
-                  </p>
-
-                </div>
-
               )}
 
-            </div>
+              <div className="ca-thinking">
+                <span className="ca-spinner" />
+                CodeAtlas is analyzing your codebase...
+              </div>
+            </>
+          )}
 
+          {/* Result */}
+          {answer && !loading && (
+            <div className="ca-fade-in">
 
-            {/* Debug status — useful during development */}
-            {(answer.llm_ok !== undefined ||
-              answer.retrieval_backend ||
-              answer.llm_error) && (
-
-              <div className="mt-4 text-xs text-zinc-600">
-
-                <div>
-                  Retrieval:{" "}
-                  <span className="text-zinc-400">
-                    {answer.retrieval_backend || "unknown"}
-                  </span>
-                </div>
-
-                <div>
-                  LLM:{" "}
-                  <span
-                    className={
-                      answer.llm_ok
-                        ? "text-emerald-400"
-                        : "text-red-400"
-                    }
-                  >
-                    {answer.llm_ok
-                      ? "OK"
-                      : "FAILED"}
-                  </span>
-                </div>
-
+              <div className="ca-msg-user">
+                <div className="ca-msg-label">You asked</div>
+                <p className="ca-msg-user-text">{askedQuestion}</p>
               </div>
 
-            )}
+              <div className="ca-msg-ai">
+                <div className="ca-msg-ai-head">
+                  <span className="ca-msg-ai-name">
+                    <Sparkles />
+                    CodeAtlas
+                  </span>
 
-
-            {/* Sources */}
-            {answer.sources?.length > 0 && (
-
-              <div className="mt-6">
-
-                <p className="text-xs text-zinc-600 uppercase tracking-wider mb-3">
-                  Sources
-                </p>
-
-                <div className="space-y-2">
-
-                  {answer.sources.map(
-                    (source, index) => (
-
-                      <div
-                        key={
-                          source.node_id ||
-                          `${source.file}-${source.name}-${index}`
-                        }
-                        className="flex items-center gap-3 border border-white/10 rounded-lg px-3 py-2.5"
-                      >
-
-                        <FileCode2
-                          size={15}
-                          className="text-zinc-500"
-                        />
-
-                        <div className="min-w-0">
-
-                          <span className="text-sm text-zinc-400 block truncate">
-                            {typeof source === "string"
-                              ? source
-                              : source.file ||
-                                source.node_id}
-                          </span>
-
-                          {typeof source !== "string" &&
-                            source.name && (
-
-                              <span className="text-xs text-zinc-600">
-                                {source.type || "symbol"}
-                                {" · "}
-                                {source.name}
-                              </span>
-
-                            )}
-
-                        </div>
-
-                      </div>
-
-                    )
+                  {retrievalLabel && (
+                    <span className="ca-status-pill" data-state={retrievalState}>
+                      {retrievalLabel}
+                    </span>
                   )}
 
+                  <span
+                    className="ca-status-pill"
+                    data-state={answer.llm_ok ? "ok" : "error"}
+                  >
+                    {answer.llm_ok ? "Gemini OK" : "Gemini failed"}
+                  </span>
                 </div>
 
+                {hasAnswer ? (
+                  <p className="ca-prose">{answer.answer}</p>
+                ) : backendError ? (
+                  <div className="ca-alert" data-tone="error">
+                    <AlertCircle size={16} />
+                    <div className="ca-alert-body">
+                      <div className="ca-alert-title">
+                        CodeAtlas could not generate an answer
+                      </div>
+                      <p style={{ margin: "4px 0 0", fontSize: 13 }}>
+                        Repository context was retrieved, but the AI did not
+                        return a usable response.
+                      </p>
+
+                      <details className="ca-details">
+                        <summary>Technical details</summary>
+                        <pre>{backendError}</pre>
+                      </details>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="ca-alert" data-tone="warn">
+                    <AlertCircle size={16} />
+                    <div className="ca-alert-body">
+                      The repository context was retrieved, but the AI did
+                      not return an answer.
+                    </div>
+                  </div>
+                )}
+
+                {/* Sources */}
+                {answer.sources?.length > 0 && (
+                  <div className="ca-sources">
+                    <div className="ca-field-label">Sources</div>
+
+                    <div className="ca-source-grid">
+                      {answer.sources.map((source, index) => (
+                        <div
+                          key={
+                            source.node_id ||
+                            `${source.file}-${source.name}-${index}`
+                          }
+                          className="ca-source"
+                        >
+                          <FileCode2 />
+
+                          <div style={{ minWidth: 0 }}>
+                            <div className="ca-source-path">
+                              {typeof source === "string"
+                                ? source
+                                : source.file || source.node_id}
+                            </div>
+
+                            {typeof source !== "string" && source.name && (
+                              <div className="ca-source-meta">
+                                {source.type || "symbol"} · {source.name}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-            )}
-
-          </div>
-
-        )}
-
-
-        {/* Input */}
-        <div className="p-4 border-t border-white/10">
-
-          <div className="flex items-end gap-3 border border-white/10 bg-black/20 rounded-xl p-2">
-
-            <textarea
-              value={question}
-              onChange={(e) =>
-                setQuestion(e.target.value)
-              }
-              onKeyDown={handleKeyDown}
-              placeholder="Ask anything about your codebase..."
-              rows={1}
-              className="flex-1 resize-none bg-transparent outline-none text-sm text-zinc-300 placeholder:text-zinc-600 px-2 py-2"
-            />
-
-            <button
-              onClick={askQuestion}
-              disabled={
-                !question.trim() ||
-                loading
-              }
-              className="w-9 h-9 rounded-lg bg-white text-black flex items-center justify-center disabled:opacity-30 hover:bg-zinc-200 transition"
-            >
-
-              <Send size={16} />
-
-            </button>
-
-          </div>
-
-          <p className="text-[11px] text-zinc-700 mt-2 px-1">
-            Enter to ask · Shift + Enter for new line
-          </p>
+            </div>
+          )}
 
         </div>
+      </div>
 
+      {/* ===================================================
+          COMPOSER
+      =================================================== */}
+
+      <div className="ca-composer">
+        <div className="ca-composer-box">
+          <textarea
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask anything about your codebase..."
+            rows={1}
+          />
+
+          <button
+            onClick={askQuestion}
+            disabled={!question.trim() || loading}
+            className="ca-btn ca-btn-ai ca-btn-icon"
+          >
+            <Send size={15} />
+          </button>
+        </div>
+
+        <p className="ca-composer-hint">
+          Enter to ask · Shift + Enter for new line
+        </p>
       </div>
 
     </div>
