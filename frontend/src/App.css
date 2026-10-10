@@ -1415,6 +1415,30 @@
   .ca-node-risk[data-level="medium" i] { background: var(--ca-medium); }
   .ca-node-risk[data-level="low" i]    { background: var(--ca-low); }
 
+  /* Impact Analysis — role styling for nodes in the focused impact
+     graph (buildImpactGraph). Undefined data-role on every other
+     graph CodeMap already draws, so these rules never affect the
+     normal file/node views. */
+
+  .ca-node[data-role="selected"] {
+    border-color: var(--ca-cyan);
+    box-shadow: var(--ca-glow);
+  }
+
+  .ca-node[data-role="direct"] {
+    border-color: var(--ca-blue-border);
+    background: color-mix(in srgb, var(--ca-blue) 5%, var(--ca-panel));
+  }
+
+  .ca-node[data-role="indirect"] {
+    border-style: dashed;
+    opacity: 0.88;
+  }
+
+  .ca-node[data-role="dependency"] {
+    border-color: var(--ca-border-strong);
+  }
+
   /* Inspector (selected node panel) */
 
   .ca-inspector {
@@ -1546,6 +1570,14 @@
     border-radius: 10px;
     background: var(--ca-panel);
     overflow: hidden;
+    /* Without this, a flex column child with overflow:hidden gets its
+       browser-computed minimum height treated as 0 instead of its
+       content height, so the inspector's flex layout (.ca-inspector-body)
+       crushes this card toward 0px whenever total content exceeds the
+       available height, instead of simply scrolling. flex-shrink: 0
+       keeps this card's content fully visible and lets the inspector
+       scroll normally instead. */
+    flex-shrink: 0;
   }
 
   .ca-signal-head {
@@ -1582,6 +1614,61 @@
     background: var(--ca-sunken);
     font-size: 12px;
     color: var(--ca-text-2);
+  }
+
+  /* Impact Analysis — depth selector, affected-node rows, empty states.
+     Reuses .ca-signal / .ca-signal-chip / .ca-badge / .ca-segmented /
+     .ca-path for everything these don't need to redefine. */
+
+  .ca-impact-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .ca-impact-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--ca-sunken);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ca-text);
+  }
+
+  .ca-impact-row-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ca-impact-distance {
+    flex-shrink: 0;
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    color: var(--ca-text-3);
+  }
+
+  .ca-impact-empty {
+    padding: 10px 12px;
+    border: 1px dashed var(--ca-border-strong);
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--ca-text-3);
+    text-align: center;
+  }
+
+  .ca-impact-files {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .ca-ai-block {

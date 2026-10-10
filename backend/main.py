@@ -15,6 +15,8 @@ from backend.risk.gemini_explainer import explain_risk_with_gemini
 from backend.rag.pipeline import CodeAtlasRAG
 from backend.secrets import redact_analysis, scan_repository
 
+from backend.impact import compute_impact
+
 
 app = FastAPI(title="CodeAtlas API")
 
@@ -515,8 +517,15 @@ def get_node(
         data=True
     ):
 
+        # NOTE: edges carry a "relation" attribute (CALLS / IMPORTS /
+        # CONTAINS), set by backend/graph.py's add_edge(..., relation=...)
+        # calls. "type" is a NODE attribute (file / function / class),
+        # not an edge one. Reading data.get("type") here always returned
+        # None, which silently made callers/callees/dependencies (and
+        # therefore local_graph) empty for every node, regardless of the
+        # repository's real structure. Fixed to read the correct key.
         edge_type = data.get(
-            "type"
+            "relation"
         )
 
         # ----------------------------------------------------
@@ -790,6 +799,64 @@ def explain_risk(
             "error"
         ),
     }
+
+
+# ============================================================
+# IMPACT ANALYSIS
+#
+# NEW. Reuses the existing NetworkX graph (current_graph) and the
+# existing RiskPredictor pipeline exactly as /api/risk does. Does not
+# change graph construction, does not introduce a new graph structure,
+# and does not introduce a new ML model — the impact level is computed
+# from explainable graph evidence only (see backend/impact.py).
+# ============================================================
+
+@app.get("/api/impact/{node_id:path}")
+def get_impact(
+    node_id: str,
+    depth: int = 2,
+):
+
+    if (
+        current_graph is None
+        or current_analysis is None
+    ):
+
+        return {
+            "error": "No repository analyzed yet"
+        }
+
+    if node_id not in current_graph.nodes:
+
+        return {
+            "error": "Node not found"
+        }
+
+    # --------------------------------------------------------
+    # Reuse the EXACT same risk pipeline as /api/risk, so impact
+    # results and risk results always agree with each other.
+    # --------------------------------------------------------
+
+    feature_rows = build_raw_features(
+        current_analysis,
+        current_graph
+    )
+
+    predictions = risk_predictor.predict(
+        feature_rows
+    )
+
+    risk_by_id = {
+        item["id"]: item
+        for item in predictions
+    }
+
+    return compute_impact(
+        current_graph,
+        node_id,
+        depth=depth,
+        risk_by_id=risk_by_id,
+    )
 
 
 # ============================================================
