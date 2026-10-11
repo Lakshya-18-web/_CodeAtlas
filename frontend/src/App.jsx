@@ -20,11 +20,13 @@ import {
   Sparkles,
   Menu,
   X,
+  GitCompare,
 } from "lucide-react";
 
 import CodeMap from "./CodeMap";
 import RiskView from "./RiskView";
 import Security from "./Security";
+import ChangeImpact from "./ChangeImpact";
 import AskCodebase from "./AskCodebase";
 import logoMark from "./assets/codeatlas-mark.png";
 
@@ -216,6 +218,11 @@ function App() {
       bypassSecretsGate: true,
     },
     {
+      page: "Change Impact",
+      label: "Change Impact",
+      icon: <GitCompare size={16} />,
+    },
+    {
       page: "Ask Codebase",
       label: "Ask Codebase",
       icon: <MessageSquare size={16} />,
@@ -403,6 +410,10 @@ function App() {
           />
         )}
 
+        {activePage === "Change Impact" && (
+          <ChangeImpact repository={repository} />
+        )}
+
         {activePage === "Ask Codebase" && <AskCodebase />}
       </div>
 
@@ -470,6 +481,11 @@ function Dashboard({
   const totalFunctions =
     stats.highRisk + stats.mediumRisk + stats.lowRisk;
 
+  // Which of the two landing options is showing. Purely a display
+  // toggle here — the actual diff-analysis form lives on the Change
+  // Impact page, reachable once a baseline repository exists.
+  const [landingMode, setLandingMode] = useState("repository");
+
   // --------------------------------------------------------
   // Empty state: nothing analyzed yet
   // --------------------------------------------------------
@@ -498,34 +514,72 @@ function Dashboard({
             </div>
           )}
 
-          <label className="cursor-pointer">
-            <input
-              type="file"
-              accept=".zip"
-              className="hidden"
-              disabled={uploading}
-              onChange={(e) => {
-                onAnalyze(e.target.files[0]);
-                e.target.value = "";
-              }}
-            />
+          <div
+            className="ca-segmented"
+            role="group"
+            aria-label="Analyze option"
+            style={{ marginTop: 24 }}
+          >
+            <button
+              aria-pressed={landingMode === "repository"}
+              onClick={() => setLandingMode("repository")}
+            >
+              Analyze Repository
+            </button>
+            <button
+              aria-pressed={landingMode === "changes"}
+              onClick={() => setLandingMode("changes")}
+            >
+              Analyze Code Changes
+            </button>
+          </div>
 
-            <div className="ca-dropzone">
-              {uploading ? (
-                <Loader2 size={26} className="animate-spin ca-faint" />
-              ) : (
-                <Upload size={26} className="ca-faint" />
-              )}
+          {landingMode === "repository" ? (
 
-              <span className="ca-btn ca-btn-primary ca-btn-lg">
-                {uploading ? "Analyzing..." : "Analyze Repository"}
-              </span>
+            <label className="cursor-pointer">
+              <input
+                type="file"
+                accept=".zip"
+                className="hidden"
+                disabled={uploading}
+                onChange={(e) => {
+                  onAnalyze(e.target.files[0]);
+                  e.target.value = "";
+                }}
+              />
 
-              <span className="ca-dropzone-hint">
-                .zip of a Python repository
-              </span>
+              <div className="ca-dropzone">
+                {uploading ? (
+                  <Loader2 size={26} className="animate-spin ca-faint" />
+                ) : (
+                  <Upload size={26} className="ca-faint" />
+                )}
+
+                <span className="ca-btn ca-btn-primary ca-btn-lg">
+                  {uploading ? "Analyzing..." : "Analyze Repository"}
+                </span>
+
+                <span className="ca-dropzone-hint">
+                  .zip of a Python repository
+                </span>
+              </div>
+            </label>
+
+          ) : (
+
+            <div className="ca-alert" data-tone="info" style={{ marginTop: 20, textAlign: "left" }}>
+              <GitCompare size={16} />
+              <div className="ca-alert-body">
+                Change Impact Analysis compares a diff against an
+                already-analyzed repository, so it needs that
+                repository as a baseline first. Use "Analyze
+                Repository" above — once it's analyzed, Change Impact
+                is available from the navigation, where you can paste
+                or upload a diff to see exactly what it affects.
+              </div>
             </div>
-          </label>
+
+          )}
 
           <ul className="ca-pillars">
             <li><Compass /> Understand</li>

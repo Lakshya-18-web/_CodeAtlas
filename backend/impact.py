@@ -9,7 +9,7 @@ traverses the CALLS / IMPORTS edges that backend/graph.py already
 produces, the same edge types /api/graph/node/{id} already reads.
 """
 
-from collections import deque
+from collections import deque, defaultdict
 
 
 # ============================================================
@@ -375,4 +375,315 @@ def compute_impact(graph, node_id, depth=2, risk_by_id=None):
             "nodes": list(graph_nodes_by_id.values()),
             "edges": graph_edges,
         },
+    }
+
+
+# ============================================================
+# COMPUTE CHANGE IMPACT  (Change Impact Intelligence)
+#
+# Aggregates impact across an entire changeset (multiple changed
+# functions at once, e.g. from a git diff), reusing the EXACT SAME
+# traversal primitives as compute_impact() above (_bfs_distances,
+# _node_summary) — no separate or duplicated graph-walking logic.
+# ============================================================
+
+def compute_change_impact(graph, changed_nodes, risk_by_id=None, depth=2):
+    """
+    changed_nodes: [{"id": node_id, "status": "modified" | "deleted"}, ...]
+                   Typically produced by backend/diff_analysis.py from a
+                   parsed git diff. A node_id not present in `graph` is
+                   skipped (reported in "skipped"), never fabricated.
+
+    risk_by_id: the same existing RiskPredictor output dict every other
+                endpoint uses. No new ML model is introduced here — the
+                impact_level below is rule-based graph evidence, exactly
+                like compute_impact()'s.
+
+    Returns a dict shaped like compute_impact()'s, plus:
+      "changed":  per-changed-node summaries (with "change_status")
+      "skipped":  changed_nodes ids that don't exist in the baseline graph
+    Each affected node also carries "caused_by": the list of changed
+    node ids whose propagation reached it — the "concise,
+    evidence-grounded" link between a change and its downstream effect.
+    """
+
+    risk_by_id = risk_by_id or {}
+
+    try:
+        depth = int(depth)
+    except (TypeError, ValueError):
+        depth = 2
+
+    depth = max(1, min(3, depth))
+
+    valid_changed = []
+    skipped = []
+
+    for item in (changed_nodes or []):
+
+        node_id = item.get("id")
+        status = item.get("status", "modified")
+
+        if node_id in graph.nodes:
+            valid_changed.append({"id": node_id, "status": status})
+        else:
+            skipped.append(node_id)
+
+    if not valid_changed:
+
+        return {
+            "changed": [],
+            "direct": [],
+            "indirect": [],
+            "affected_files": [],
+            "impact_summary": {
+                "direct_count": 0,
+                "indirect_count": 0,
+                "affected_file_count": 0,
+                "high_risk_affected": [],
+                "impact_level": "Low",
+                "reasons": [
+                    "No changed functions could be matched to the "
+                    "analyzed baseline."
+                ],
+            },
+            "graph": {"nodes": [], "edges": []},
+            "skipped": skipped,
+        }
+
+    # --------------------------------------------------------
+    # Merge reverse-CALLS BFS from EVERY changed node.
+    #
+    # A node's overall distance is the SHORTEST distance from ANY
+    # changed node (so a diamond-shaped dependency never gets
+    # double-counted), and "caused_by" names every changed node whose
+    # propagation reaches it.
+    # --------------------------------------------------------
+
+    merged_distances = {}
+    merged_causes = defaultdict(set)
+    merged_edges = []
+    seen_edges = set()
+
+    for change in valid_changed:
+
+        node_id = change["id"]
+
+        distances, edges = _bfs_distances(
+            graph,
+            node_id,
+            relation="CALLS",
+            reverse=True,
+            max_depth=depth,
+        )
+
+        for affected_id, distance in distances.items():
+
+            if (
+                affected_id not in merged_distances
+                or distance < merged_distances[affected_id]
+            ):
+                merged_distances[affected_id] = distance
+
+            merged_causes[affected_id].add(node_id)
+
+        for edge_source, edge_target, relation in edges:
+
+            edge_key = (edge_source, edge_target, relation)
+
+            if edge_key not in seen_edges:
+                seen_edges.add(edge_key)
+                merged_edges.append((edge_source, edge_target, relation))
+
+    # A changed function is never ALSO listed as "affected by" the
+    # changeset, even if another changed function happens to call it.
+    changed_ids = {change["id"] for change in valid_changed}
+
+    for changed_id in changed_ids:
+        merged_distances.pop(changed_id, None)
+        merged_causes.pop(changed_id, None)
+
+    direct_ids = [
+        node_id
+        for node_id, distance in merged_distances.items()
+        if distance == 1
+    ]
+
+    indirect_ids = [
+        node_id
+        for node_id, distance in merged_distances.items()
+        if distance > 1
+    ]
+
+    def summarize(ids):
+
+        results = []
+
+        for affected_id in ids:
+
+            role = (
+                "direct"
+                if merged_distances[affected_id] == 1
+                else "indirect"
+            )
+
+            summary = _node_summary(
+                graph,
+                affected_id,
+                role=role,
+                distance=merged_distances[affected_id],
+            )
+
+            if summary is None:
+                continue
+
+            summary["caused_by"] = sorted(merged_causes[affected_id])
+
+            risk = risk_by_id.get(affected_id)
+
+            if risk is not None:
+                summary["risk_level"] = risk.get("risk_level")
+                summary["risk_probability"] = risk.get("risk_probability")
+
+            results.append(summary)
+
+        return results
+
+    direct = summarize(direct_ids)
+    indirect = summarize(indirect_ids)
+
+    affected_files = sorted(
+        {
+            item["file"]
+            for item in (direct + indirect)
+            if item.get("file")
+        }
+    )
+
+    high_risk_affected = [
+        item
+        for item in (direct + indirect)
+        if item.get("risk_level") == "High"
+    ]
+
+    direct_count = len(direct)
+    indirect_count = len(indirect)
+    total_affected = direct_count + indirect_count
+    affected_file_count = len(affected_files)
+    high_risk_count = len(high_risk_affected)
+    changed_count = len(valid_changed)
+
+    reasons = []
+
+    if changed_count:
+        reasons.append(
+            f"{changed_count} changed function"
+            f"{'s' if changed_count != 1 else ''}"
+        )
+
+    if direct_count:
+        reasons.append(
+            f"{direct_count} direct dependent"
+            f"{'s' if direct_count != 1 else ''}"
+        )
+
+    if indirect_count:
+        reasons.append(
+            f"{indirect_count} indirect dependent"
+            f"{'s' if indirect_count != 1 else ''} "
+            f"within {depth} hop{'s' if depth != 1 else ''}"
+        )
+
+    if affected_file_count:
+        reasons.append(
+            f"{affected_file_count} affected file"
+            f"{'s' if affected_file_count != 1 else ''}"
+        )
+
+    if high_risk_count:
+        reasons.append(
+            f"{high_risk_count} high-risk affected "
+            f"function{'s' if high_risk_count != 1 else ''}"
+        )
+
+    if not reasons:
+        reasons.append(
+            "No dependents found for the changed functions within "
+            "the selected depth"
+        )
+
+    # Thresholds are scaled up slightly from compute_impact()'s
+    # single-node ones, since a changeset naturally touches more nodes
+    # — still explainable graph evidence only, not a new ML model.
+    if (
+        total_affected >= 10
+        or affected_file_count >= 6
+        or (high_risk_count > 0 and total_affected >= 4)
+    ):
+        impact_level = "High"
+
+    elif (
+        total_affected >= 4
+        or affected_file_count >= 2
+        or high_risk_count > 0
+    ):
+        impact_level = "Medium"
+
+    else:
+        impact_level = "Low"
+
+    # --------------------------------------------------------
+    # Focused graph: changed nodes (role="changed", + change_status)
+    # plus everything direct/indirect, and the real traversed edges.
+    # --------------------------------------------------------
+
+    changed_summaries = []
+
+    for change in valid_changed:
+
+        summary = _node_summary(graph, change["id"], role="changed")
+
+        if summary is None:
+            continue
+
+        summary["change_status"] = change["status"]
+
+        risk = risk_by_id.get(change["id"])
+
+        if risk is not None:
+            summary["risk_level"] = risk.get("risk_level")
+            summary["risk_probability"] = risk.get("risk_probability")
+
+        changed_summaries.append(summary)
+
+    graph_nodes_by_id = {}
+
+    for item in changed_summaries + direct + indirect:
+
+        if item["id"] not in graph_nodes_by_id:
+            graph_nodes_by_id[item["id"]] = item
+
+    graph_edges = [
+        {"source": source, "target": target, "relation": relation}
+        for source, target, relation in merged_edges
+    ]
+
+    return {
+        "changed": changed_summaries,
+        "direct": direct,
+        "indirect": indirect,
+        "affected_files": affected_files,
+        "impact_summary": {
+            "direct_count": direct_count,
+            "indirect_count": indirect_count,
+            "affected_file_count": affected_file_count,
+            "high_risk_affected": high_risk_affected,
+            "impact_level": impact_level,
+            "reasons": reasons,
+        },
+        "graph": {
+            "nodes": list(graph_nodes_by_id.values()),
+            "edges": graph_edges,
+        },
+        "skipped": skipped,
     }

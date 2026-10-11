@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import dagre from "@dagrejs/dagre";
 
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
-  Handle,
-  Position,
 } from "@xyflow/react";
 
 import "@xyflow/react/dist/style.css";
@@ -20,211 +17,17 @@ import {
   Sparkles,
   Loader2,
   FolderTree,
-  FileCode2,
   ArrowLeft,
   Network,
   KeyRound,
 } from "lucide-react";
 
-
-const NODE_WIDTH = 190;
-const NODE_HEIGHT = 72;
-
-
-// ============================================================
-// RELATION -> EDGE CLASS  (purely visual; relation text unchanged)
-// ============================================================
-
-function relationEdgeClass(relation) {
-  const r = String(relation || "").toUpperCase();
-  if (r === "CALLS") return "ca-edge-calls";
-  if (r === "IMPORTS") return "ca-edge-imports";
-  if (r === "CONTAINS") return "ca-edge-contains";
-  return "";
-}
-
-
-// ============================================================
-// CUSTOM GRAPH NODE
-// ============================================================
-
-function CustomNode({ data }) {
-
-  const isFile =
-    data.type === "file";
-
-  const isClass =
-    data.type === "class";
-
-  const riskLevel = data.riskLevel
-    ? String(data.riskLevel).toLowerCase()
-    : null;
-
-  // Only set on nodes rendered as part of an Impact Analysis focused
-  // graph (see buildImpactGraph). Undefined on every other graph CodeMap
-  // already draws, so this never affects existing file/node views.
-  const impactRole = data.role || undefined;
-
-  return (
-    <div
-      className="ca-node"
-      data-kind={data.type}
-      data-role={impactRole}
-    >
-
-      <Handle
-        type="target"
-        position={Position.Left}
-      />
-
-      <div className="ca-node-head">
-
-        {isFile ? (
-          <FileCode2 />
-        ) : (
-          <Code2 />
-        )}
-
-        <span className="ca-node-label">
-          {data.label}
-        </span>
-
-        {riskLevel && (
-          <span
-            className="ca-node-risk"
-            data-level={riskLevel}
-            title={`${data.riskLevel} risk`}
-          />
-        )}
-
-        {data.hasSecret && (
-          <KeyRound
-            size={12}
-            style={{ color: "var(--ca-medium-text)", flexShrink: 0 }}
-          />
-        )}
-
-      </div>
-
-      <p className="ca-node-kind">
-        {isFile
-          ? "Python file"
-          : isClass
-          ? "Class"
-          : "Function"}
-        {impactRole === "indirect" && data.distance
-          ? ` · hop ${data.distance}`
-          : ""}
-        {impactRole === "selected" ? " · selected" : ""}
-      </p>
-
-      <Handle
-        type="source"
-        position={Position.Right}
-      />
-
-    </div>
-  );
-}
-
-
-const nodeTypes = {
-  custom: CustomNode,
-};
-
-
-// ============================================================
-// DAGRE GRAPH LAYOUT
-// ============================================================
-
-function getLayoutedElements(
-  nodes,
-  edges
-) {
-
-  if (!nodes.length) {
-    return {
-      nodes: [],
-      edges,
-    };
-  }
-
-  const graph =
-    new dagre.graphlib.Graph();
-
-  graph.setDefaultEdgeLabel(
-    () => ({})
-  );
-
-  graph.setGraph({
-    rankdir: "LR",
-    nodesep: 70,
-    ranksep: 130,
-    marginx: 30,
-    marginy: 30,
-  });
-
-  nodes.forEach((node) => {
-
-    graph.setNode(
-      node.id,
-      {
-        width: NODE_WIDTH,
-        height: NODE_HEIGHT,
-      }
-    );
-
-  });
-
-  edges.forEach((edge) => {
-
-    if (
-      graph.hasNode(edge.source) &&
-      graph.hasNode(edge.target)
-    ) {
-
-      graph.setEdge(
-        edge.source,
-        edge.target
-      );
-
-    }
-
-  });
-
-  dagre.layout(graph);
-
-  return {
-
-    nodes: nodes.map((node) => {
-
-      const position =
-        graph.node(node.id);
-
-      return {
-        ...node,
-
-        position: position
-          ? {
-              x:
-                position.x -
-                NODE_WIDTH / 2,
-
-              y:
-                position.y -
-                NODE_HEIGHT / 2,
-            }
-          : {
-              x: 0,
-              y: 0,
-            },
-      };
-
-    }),
-
-    edges,
-  };
-}
+import {
+  nodeTypes,
+  getLayoutedElements,
+  relationEdgeClass,
+  buildFocusedGraph,
+} from "./graphUtils.jsx";
 
 
 // ============================================================
@@ -658,100 +461,6 @@ export default function CodeMap({
 
 
   // ============================================================
-  // BUILD IMPACT GRAPH
-  //
-  // Converts the focused graph returned by GET /api/impact/{id} (see
-  // backend/impact.py) into the same ReactFlow node/edge shape
-  // buildGraph() already produces, reusing the existing dagre layout
-  // and edge-relation styling rather than introducing a second
-  // rendering path.
-  // ============================================================
-
-  function buildImpactGraph(impactGraph) {
-
-    const rawNodes = impactGraph?.nodes || [];
-    const rawEdges = impactGraph?.edges || [];
-
-    const formattedNodes = rawNodes.map((node) => ({
-
-      id: node.id,
-
-      type: "custom",
-
-      data: {
-
-        label:
-          node.type === "function"
-            ? `${node.name}()`
-            : node.name || node.id,
-
-        type: node.type,
-
-        role: node.role,
-
-        distance: node.distance,
-
-        riskLevel: node.risk_level || null,
-
-      },
-
-      position: {
-        x: 0,
-        y: 0,
-      },
-
-    }));
-
-    const formattedEdges = rawEdges
-
-      .map(
-        (edge, index) => ({
-
-          id:
-            `impact-edge-${index}-${edge.source}-${edge.target}`,
-
-          source:
-            edge.source,
-
-          target:
-            edge.target,
-
-          label:
-            edge.relation,
-
-          type:
-            "smoothstep",
-
-          className:
-            relationEdgeClass(
-              edge.relation
-            ),
-
-        })
-      )
-
-      .filter(
-        (edge) =>
-          formattedNodes.some(
-            (node) =>
-              node.id ===
-              edge.source
-          ) &&
-          formattedNodes.some(
-            (node) =>
-              node.id ===
-              edge.target
-          )
-      );
-
-    return getLayoutedElements(
-      formattedNodes,
-      formattedEdges
-    );
-  }
-
-
-  // ============================================================
   // OPEN FILE
   // ============================================================
 
@@ -1120,7 +829,7 @@ export default function CodeMap({
       impactData?.graph
     ) {
 
-      const graph = buildImpactGraph(
+      const graph = buildFocusedGraph(
         impactData.graph
       );
 
@@ -1144,7 +853,7 @@ export default function CodeMap({
       return;
     }
 
-    const graph = buildImpactGraph(
+    const graph = buildFocusedGraph(
       impactData.graph
     );
 
