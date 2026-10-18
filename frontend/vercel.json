@@ -1,8 +1,9 @@
+
 {
-"rewrites": [
-{
-"source": "/api/*",
-"destination": "https://codeatlas-y1r2.onrender.com/api/*"
-}
-]
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://codeatlas-y1r2.onrender.com/api/$1"
+    }
+  ]
 }
