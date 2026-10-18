@@ -15,6 +15,9 @@ from backend.risk.gemini_explainer import explain_risk_with_gemini
 from backend.rag.pipeline import CodeAtlasRAG
 from backend.secrets import redact_analysis, scan_repository
 
+from backend.impact import compute_impact, compute_change_impact
+from backend.diff_analysis import analyze_diff
+
 
 app = FastAPI(title="CodeAtlas API")
 
@@ -515,8 +518,15 @@ def get_node(
         data=True
     ):
 
+        # NOTE: edges carry a "relation" attribute (CALLS / IMPORTS /
+        # CONTAINS), set by backend/graph.py's add_edge(..., relation=...)
+        # calls. "type" is a NODE attribute (file / function / class),
+        # not an edge one. Reading data.get("type") here always returned
+        # None, which silently made callers/callees/dependencies (and
+        # therefore local_graph) empty for every node, regardless of the
+        # repository's real structure. Fixed to read the correct key.
         edge_type = data.get(
-            "type"
+            "relation"
         )
 
         # ----------------------------------------------------
@@ -789,6 +799,181 @@ def explain_risk(
         "error": explanation.get(
             "error"
         ),
+    }
+
+
+# ============================================================
+# IMPACT ANALYSIS
+#
+# NEW. Reuses the existing NetworkX graph (current_graph) and the
+# existing RiskPredictor pipeline exactly as /api/risk does. Does not
+# change graph construction, does not introduce a new graph structure,
+# and does not introduce a new ML model — the impact level is computed
+# from explainable graph evidence only (see backend/impact.py).
+# ============================================================
+
+@app.get("/api/impact/{node_id:path}")
+def get_impact(
+    node_id: str,
+    depth: int = 2,
+):
+
+    if (
+        current_graph is None
+        or current_analysis is None
+    ):
+
+        return {
+            "error": "No repository analyzed yet"
+        }
+
+    if node_id not in current_graph.nodes:
+
+        return {
+            "error": "Node not found"
+        }
+
+    # --------------------------------------------------------
+    # Reuse the EXACT same risk pipeline as /api/risk, so impact
+    # results and risk results always agree with each other.
+    # --------------------------------------------------------
+
+    feature_rows = build_raw_features(
+        current_analysis,
+        current_graph
+    )
+
+    predictions = risk_predictor.predict(
+        feature_rows
+    )
+
+    risk_by_id = {
+        item["id"]: item
+        for item in predictions
+    }
+
+    return compute_impact(
+        current_graph,
+        node_id,
+        depth=depth,
+        risk_by_id=risk_by_id,
+    )
+
+
+# ============================================================
+# CHANGE IMPACT INTELLIGENCE  (Git Diff-Based Impact Analysis)
+#
+# NEW. Extends Impact Analysis v1 rather than replacing it:
+# - Reuses the SAME graph traversal (backend/impact.py's
+#   compute_change_impact calls the same _bfs_distances/_node_summary
+#   helpers compute_impact already uses — no duplicated logic).
+# - Reuses the SAME risk pipeline as /api/risk and /api/impact/{id}.
+# - The uploaded repository already analyzed via POST /api/analyze IS
+#   the baseline. A diff is interpreted as proposed changes against
+#   that baseline — it is never executed, and nothing on disk is
+#   touched by it.
+# ============================================================
+
+# A deliberately generous but bounded cap: large enough for a real
+# multi-file diff, small enough that a malicious/huge payload can't
+# make this endpoint do unbounded work.
+MAX_DIFF_BYTES = 2_000_000  # ~2 MB
+
+
+class ChangeImpactRequest(BaseModel):
+
+    diff: str
+    depth: int = 2
+
+
+@app.post("/api/impact/changes")
+def analyze_change_impact(
+    request: ChangeImpactRequest,
+):
+
+    if (
+        current_graph is None
+        or current_analysis is None
+    ):
+
+        return {
+            "error": (
+                "No repository analyzed yet. Analyze a repository "
+                "first — it becomes the baseline this diff is "
+                "compared against."
+            )
+        }
+
+    if not request.diff or not request.diff.strip():
+
+        return {
+            "error": "No diff provided."
+        }
+
+    diff_bytes = len(
+        request.diff.encode("utf-8", errors="ignore")
+    )
+
+    if diff_bytes > MAX_DIFF_BYTES:
+
+        return {
+            "error": (
+                f"Diff is too large "
+                f"({diff_bytes / 1_000_000:.1f} MB, limit "
+                f"{MAX_DIFF_BYTES / 1_000_000:.0f} MB). Submit a "
+                f"smaller diff."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Parse the diff and map it onto the baseline graph/analysis.
+    # Never raises — malformed/empty/unmappable input is reported as
+    # structured warnings, never fabricated impact.
+    # --------------------------------------------------------
+
+    diff_result = analyze_diff(
+        request.diff,
+        current_graph,
+        current_analysis,
+    )
+
+    # --------------------------------------------------------
+    # Reuse the EXACT same risk pipeline as /api/risk and
+    # /api/impact/{id}, so results always agree with each other.
+    # --------------------------------------------------------
+
+    feature_rows = build_raw_features(
+        current_analysis,
+        current_graph
+    )
+
+    predictions = risk_predictor.predict(
+        feature_rows
+    )
+
+    risk_by_id = {
+        item["id"]: item
+        for item in predictions
+    }
+
+    impact_result = compute_change_impact(
+        current_graph,
+        diff_result["changed_nodes"],
+        risk_by_id=risk_by_id,
+        depth=request.depth,
+    )
+
+    return {
+        "files": diff_result["files"],
+        "warnings": diff_result["warnings"],
+        "skipped": impact_result["skipped"],
+
+        "changed": impact_result["changed"],
+        "direct": impact_result["direct"],
+        "indirect": impact_result["indirect"],
+        "affected_files": impact_result["affected_files"],
+        "impact_summary": impact_result["impact_summary"],
+        "graph": impact_result["graph"],
     }
 
 

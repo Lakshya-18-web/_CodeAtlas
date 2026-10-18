@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import dagre from "@dagrejs/dagre";
 
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
-  Handle,
-  Position,
 } from "@xyflow/react";
 
 import "@xyflow/react/dist/style.css";
@@ -20,201 +17,17 @@ import {
   Sparkles,
   Loader2,
   FolderTree,
-  FileCode2,
   ArrowLeft,
   Network,
   KeyRound,
 } from "lucide-react";
 
-
-const NODE_WIDTH = 190;
-const NODE_HEIGHT = 72;
-
-
-// ============================================================
-// RELATION -> EDGE CLASS  (purely visual; relation text unchanged)
-// ============================================================
-
-function relationEdgeClass(relation) {
-  const r = String(relation || "").toUpperCase();
-  if (r === "CALLS") return "ca-edge-calls";
-  if (r === "IMPORTS") return "ca-edge-imports";
-  if (r === "CONTAINS") return "ca-edge-contains";
-  return "";
-}
-
-
-// ============================================================
-// CUSTOM GRAPH NODE
-// ============================================================
-
-function CustomNode({ data }) {
-
-  const isFile =
-    data.type === "file";
-
-  const isClass =
-    data.type === "class";
-
-  const riskLevel = data.riskLevel
-    ? String(data.riskLevel).toLowerCase()
-    : null;
-
-  return (
-    <div
-      className="ca-node"
-      data-kind={data.type}
-    >
-
-      <Handle
-        type="target"
-        position={Position.Left}
-      />
-
-      <div className="ca-node-head">
-
-        {isFile ? (
-          <FileCode2 />
-        ) : (
-          <Code2 />
-        )}
-
-        <span className="ca-node-label">
-          {data.label}
-        </span>
-
-        {riskLevel && (
-          <span
-            className="ca-node-risk"
-            data-level={riskLevel}
-            title={`${data.riskLevel} risk`}
-          />
-        )}
-
-        {data.hasSecret && (
-          <KeyRound
-            size={12}
-            style={{ color: "var(--ca-medium-text)", flexShrink: 0 }}
-          />
-        )}
-
-      </div>
-
-      <p className="ca-node-kind">
-        {isFile
-          ? "Python file"
-          : isClass
-          ? "Class"
-          : "Function"}
-      </p>
-
-      <Handle
-        type="source"
-        position={Position.Right}
-      />
-
-    </div>
-  );
-}
-
-
-const nodeTypes = {
-  custom: CustomNode,
-};
-
-
-// ============================================================
-// DAGRE GRAPH LAYOUT
-// ============================================================
-
-function getLayoutedElements(
-  nodes,
-  edges
-) {
-
-  if (!nodes.length) {
-    return {
-      nodes: [],
-      edges,
-    };
-  }
-
-  const graph =
-    new dagre.graphlib.Graph();
-
-  graph.setDefaultEdgeLabel(
-    () => ({})
-  );
-
-  graph.setGraph({
-    rankdir: "LR",
-    nodesep: 70,
-    ranksep: 130,
-    marginx: 30,
-    marginy: 30,
-  });
-
-  nodes.forEach((node) => {
-
-    graph.setNode(
-      node.id,
-      {
-        width: NODE_WIDTH,
-        height: NODE_HEIGHT,
-      }
-    );
-
-  });
-
-  edges.forEach((edge) => {
-
-    if (
-      graph.hasNode(edge.source) &&
-      graph.hasNode(edge.target)
-    ) {
-
-      graph.setEdge(
-        edge.source,
-        edge.target
-      );
-
-    }
-
-  });
-
-  dagre.layout(graph);
-
-  return {
-
-    nodes: nodes.map((node) => {
-
-      const position =
-        graph.node(node.id);
-
-      return {
-        ...node,
-
-        position: position
-          ? {
-              x:
-                position.x -
-                NODE_WIDTH / 2,
-
-              y:
-                position.y -
-                NODE_HEIGHT / 2,
-            }
-          : {
-              x: 0,
-              y: 0,
-            },
-      };
-
-    }),
-
-    edges,
-  };
-}
+import {
+  nodeTypes,
+  getLayoutedElements,
+  relationEdgeClass,
+  buildFocusedGraph,
+} from "./graphUtils.jsx";
 
 
 // ============================================================
@@ -372,6 +185,23 @@ export default function CodeMap({
 
   const [error, setError] =
     useState(null);
+
+  // ----- Impact Analysis (new; additive to the existing inspector) -----
+
+  const [impactDepth, setImpactDepth] =
+    useState(2);
+
+  const [impactData, setImpactData] =
+    useState(null);
+
+  const [impactLoading, setImpactLoading] =
+    useState(false);
+
+  const [impactError, setImpactError] =
+    useState(null);
+
+  const [impactGraphActive, setImpactGraphActive] =
+    useState(false);
 
 
   // ============================================================
@@ -874,6 +704,197 @@ export default function CodeMap({
 
 
   // ============================================================
+  // IMPACT ANALYSIS
+  //
+  // New capability, additive to the existing inspector. Backed by
+  // GET /api/impact/{id}?depth=N (backend/impact.py), which reuses the
+  // same NetworkX graph and the same risk predictions /api/risk
+  // already computes. If this fails, it only affects the Impact
+  // Analysis card below — the rest of the Code Map (file browsing,
+  // node selection, callers/callees/dependencies, risk, source) is
+  // unaffected.
+  // ============================================================
+
+  // Leave "impact map" canvas mode whenever a DIFFERENT node becomes
+  // selected (including when the selection is cleared). Intentionally
+  // does NOT depend on impactDepth, so adjusting depth while already
+  // viewing the impact map doesn't kick the user back to node view.
+  useEffect(() => {
+
+    setImpactGraphActive(false);
+
+  }, [selectedNode?.id]);
+
+
+  // Fetch impact data for the selected function node. Re-fetches
+  // whenever the selected node or the chosen depth changes.
+  useEffect(() => {
+
+    if (
+      !selectedNode ||
+      selectedNode.type !== "function"
+    ) {
+
+      setImpactData(null);
+      setImpactError(null);
+      setImpactLoading(false);
+
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadImpact() {
+
+      setImpactLoading(true);
+      setImpactError(null);
+
+      try {
+
+        const response = await fetch(
+          `/api/impact/${encodeURIComponent(
+            selectedNode.id
+          )}?depth=${impactDepth}`
+        );
+
+        const data = await response.json();
+
+        if (
+          !response.ok ||
+          data.error
+        ) {
+
+          throw new Error(
+            data.error ||
+            "Failed to compute impact"
+          );
+
+        }
+
+        if (!cancelled) {
+
+          setImpactData(data);
+
+        }
+
+      } catch (err) {
+
+        console.error(
+          "Impact analysis failed:",
+          err
+        );
+
+        if (!cancelled) {
+
+          setImpactError(
+            err.message ||
+            "Failed to compute impact"
+          );
+
+          setImpactData(null);
+
+        }
+
+      } finally {
+
+        if (!cancelled) {
+
+          setImpactLoading(false);
+
+        }
+
+      }
+
+    }
+
+    loadImpact();
+
+    return () => {
+      cancelled = true;
+    };
+
+  }, [
+    selectedNode?.id,
+    selectedNode?.type,
+    impactDepth,
+  ]);
+
+
+  // While the impact map is open, keep the canvas in sync if the
+  // depth selector produces new impact data (no extra click needed).
+  useEffect(() => {
+
+    if (
+      impactGraphActive &&
+      impactData?.graph
+    ) {
+
+      const graph = buildFocusedGraph(
+        impactData.graph
+      );
+
+      setNodes(
+        graph.nodes
+      );
+
+      setEdges(
+        graph.edges
+      );
+
+    }
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [impactData]);
+
+
+  function openImpactGraph() {
+
+    if (!impactData?.graph) {
+      return;
+    }
+
+    const graph = buildFocusedGraph(
+      impactData.graph
+    );
+
+    setNodes(
+      graph.nodes
+    );
+
+    setEdges(
+      graph.edges
+    );
+
+    setImpactGraphActive(true);
+
+  }
+
+
+  function closeImpactGraph() {
+
+    if (selectedNode?.local_graph) {
+
+      const graph = buildGraph(
+        selectedNode.local_graph.nodes || [],
+        selectedNode.local_graph.edges || []
+      );
+
+      setNodes(
+        graph.nodes
+      );
+
+      setEdges(
+        graph.edges
+      );
+
+    }
+
+    setImpactGraphActive(false);
+
+  }
+
+
+  // ============================================================
   // GEMINI EXPLANATION
   // ============================================================
 
@@ -1338,13 +1359,31 @@ export default function CodeMap({
 
                 <>
                   <div className="ca-map-legend">
-                    <div className="ca-legend">
-                      <span className="ca-legend-item" data-kind="file">File</span>
-                      <span className="ca-legend-item" data-kind="class">Class</span>
-                      <span className="ca-legend-item" data-kind="function">Function</span>
-                      <span className="ca-legend-item" data-level="high">High risk</span>
-                      <span className="ca-legend-item" data-level="medium">Medium risk</span>
-                    </div>
+                    {impactGraphActive ? (
+                      <div className="ca-legend">
+                        <span className="ca-legend-item" data-kind="file" style={{ color: "var(--ca-cyan)" }}>
+                          Selected
+                        </span>
+                        <span className="ca-legend-item" data-kind="class">Direct</span>
+                        <span className="ca-legend-item" data-kind="function">Indirect</span>
+                        <button
+                          onClick={closeImpactGraph}
+                          className="ca-btn ca-btn-ghost ca-btn-sm"
+                          style={{ marginLeft: 4 }}
+                        >
+                          <ArrowLeft size={13} />
+                          Node view
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="ca-legend">
+                        <span className="ca-legend-item" data-kind="file">File</span>
+                        <span className="ca-legend-item" data-kind="class">Class</span>
+                        <span className="ca-legend-item" data-kind="function">Function</span>
+                        <span className="ca-legend-item" data-level="high">High risk</span>
+                        <span className="ca-legend-item" data-level="medium">Medium risk</span>
+                      </div>
+                    )}
                   </div>
 
                   <ReactFlow
@@ -1675,6 +1714,203 @@ export default function CodeMap({
                         </p>
                       </div>
                     )}
+
+                  </div>
+
+
+                  {/* IMPACT ANALYSIS */}
+
+                  <div
+                    className="ca-signal"
+                    data-level={
+                      impactData?.impact_summary?.impact_level?.toLowerCase()
+                    }
+                  >
+
+                    <div className="ca-signal-head">
+                      <span>
+                        <Network
+                          size={15}
+                          style={{ color: "var(--ca-cyan)" }}
+                        />
+                        Impact Analysis
+                      </span>
+
+                      {impactData && !impactLoading && (
+                        <span
+                          className="ca-badge ca-badge-dot"
+                          data-tone={impactData.impact_summary.impact_level.toLowerCase()}
+                        >
+                          {impactData.impact_summary.impact_level} Impact
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="ca-signal-body">
+
+                      <div className="ca-impact-toolbar">
+                        <span className="ca-field-label" style={{ marginBottom: 0 }}>
+                          Depth
+                        </span>
+
+                        <div
+                          className="ca-segmented"
+                          role="group"
+                          aria-label="Impact depth"
+                        >
+                          {[1, 2, 3].map((depthOption) => (
+                            <button
+                              key={depthOption}
+                              aria-pressed={impactDepth === depthOption}
+                              onClick={() => setImpactDepth(depthOption)}
+                            >
+                              {depthOption}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {impactLoading && (
+                        <div className="ca-loading-line" style={{ padding: 16 }}>
+                          <span className="ca-spinner" />
+                          Analyzing impact...
+                        </div>
+                      )}
+
+                      {impactError && !impactLoading && (
+                        <div className="ca-alert" data-tone="error">
+                          <ShieldAlert size={15} />
+                          <div className="ca-alert-body">{impactError}</div>
+                        </div>
+                      )}
+
+                      {!impactLoading && !impactError && impactData && (
+                        <>
+
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {impactData.impact_summary.reasons.map((reason, index) => (
+                              <span key={index} className="ca-signal-chip">
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+
+                          <div>
+                            <div className="ca-field-label">
+                              Direct Impact ({impactData.impact_summary.direct_count})
+                            </div>
+
+                            {impactData.direct.length > 0 ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {impactData.direct.map((item) => (
+                                  <div key={item.id} className="ca-impact-row">
+                                    <span className="ca-impact-row-name">
+                                      {item.type === "function" ? `${item.name}()` : item.name}
+                                    </span>
+
+                                    {item.risk_level && (
+                                      <span
+                                        className="ca-badge"
+                                        data-tone={item.risk_level.toLowerCase()}
+                                      >
+                                        {item.risk_level}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="ca-impact-empty">No direct dependents</div>
+                            )}
+                          </div>
+
+                          <div>
+                            <div className="ca-field-label">
+                              Indirect Impact ({impactData.impact_summary.indirect_count})
+                            </div>
+
+                            {impactData.indirect.length > 0 ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {impactData.indirect.map((item) => (
+                                  <div key={item.id} className="ca-impact-row">
+                                    <span className="ca-impact-row-name">
+                                      {item.type === "function" ? `${item.name}()` : item.name}
+                                    </span>
+
+                                    <span className="ca-impact-distance">
+                                      hop {item.distance}
+                                    </span>
+
+                                    {item.risk_level && (
+                                      <span
+                                        className="ca-badge"
+                                        data-tone={item.risk_level.toLowerCase()}
+                                      >
+                                        {item.risk_level}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="ca-impact-empty">
+                                No indirect dependents within depth {impactData.depth}
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <div className="ca-field-label">
+                              Dependencies ({impactData.dependencies.length})
+                            </div>
+
+                            {impactData.dependencies.length > 0 ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                {impactData.dependencies.map((item) => (
+                                  <div key={item.id} className="ca-impact-row">
+                                    <span className="ca-impact-row-name">
+                                      {item.type === "function" ? `${item.name}()` : item.name}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="ca-impact-empty">No direct dependencies</div>
+                            )}
+                          </div>
+
+                          {impactData.affected_files.length > 0 && (
+                            <div>
+                              <div className="ca-field-label">
+                                Affected Files ({impactData.affected_files.length})
+                              </div>
+
+                              <div className="ca-impact-files">
+                                {impactData.affected_files.map((filePath) => (
+                                  <span key={filePath} className="ca-path" style={{ wordBreak: "break-all" }}>
+                                    {filePath}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={
+                              impactGraphActive
+                                ? closeImpactGraph
+                                : openImpactGraph
+                            }
+                            className="ca-btn ca-btn-secondary ca-btn-block"
+                          >
+                            <Network size={14} />
+                            {impactGraphActive ? "Back to Node View" : "View Impact Map"}
+                          </button>
+
+                        </>
+                      )}
+
+                    </div>
 
                   </div>
 
